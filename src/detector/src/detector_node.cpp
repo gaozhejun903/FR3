@@ -8,6 +8,8 @@ detector_node::detector_node(const rclcpp::NodeOptions& options): Node("detector
     //AI修改 更新为用户的TRT10模型路径，plugin设为空（标准模型不需要）
     this->declare_parameter("model_path", "/home/mihu/FR3_again/detector/best2.engine");
     this->declare_parameter("plugin_path", "");
+    //AI修改 添加num_classes参数，自定义模型可覆盖默认80类（init会自动推断，这里提供手动覆盖）
+    this->declare_parameter("num_classes", 80);
 #endif
 #ifdef USING_LW_DETR
     this->declare_parameter(
@@ -33,7 +35,13 @@ detector_node::detector_node(const rclcpp::NodeOptions& options): Node("detector
 // 初始化YOLOv8推理对象
 #ifdef USING_YOLOV8
     yolov8_detector_ = std::make_unique<YoloV8>();
-    int ret          = yolov8_detector_->init(model_path_, plugin_path_);
+    //AI修改 允许通过ROS参数覆盖类别数（自动推断失败时可手动指定）
+    int user_num_classes = this->get_parameter_or("num_classes", 80);
+    if (user_num_classes != 80) {
+        yolov8_detector_->num_classes_ = user_num_classes;
+        RCLCPP_INFO(this->get_logger(), "手动设置类别数: %d", user_num_classes);
+    }
+    int ret = yolov8_detector_->init(model_path_, plugin_path_);
     if (ret != 0) {
         RCLCPP_ERROR(this->get_logger(), "YOLOv8初始化失败，错误码: %d", ret);
         throw std::runtime_error("YOLOv8初始化失败");

@@ -12,7 +12,7 @@ class Logger: public nvinfer1::ILogger {
 
 detector::YoloV8::YoloV8() {
     host_inputs  = new float[batch_size * 3 * input_h * input_w];
-    host_outputs = new float[output_size]; //AI修改 修复硬编码38001，改为变量
+    //AI修改 host_outputs推迟到init()中根据engine实际输出大小动态分配
 }
 
 detector::YoloV8::~YoloV8() {
@@ -62,21 +62,47 @@ int detector::YoloV8::init(std::string engine_path, std::string plugin_path) {
         return -1;
     }
 
-    cudaMalloc((void**)&cuda_inputs, batch_size * 3 * input_h * input_w * sizeof(float));
-    cudaMalloc((void**)&cuda_outputs, output_size * sizeof(float));
-
     cudaStreamCreate(&stream);
 
-    //AI修改 TRT10: 删除void** bindings，改用setTensorAddress按name绑定
-    if (engine->getNbIOTensors() >= 2) {
-        input_name_  = engine->getIOTensorName(0);
-        output_name_ = engine->getIOTensorName(1);
-        context->setTensorAddress(input_name_.c_str(), cuda_inputs);
-        context->setTensorAddress(output_name_.c_str(), cuda_outputs);
-    } else {
+    //AI修改 先获取tensor名称并探测输出形状，再分配内存，最后绑定地址
+    if (engine->getNbIOTensors() < 2) {
         std::cerr << "Error: Engine should have at least 1 input and 1 output" << std::endl;
         return -1;
     }
+    input_name_  = engine->getIOTensorName(0);
+    output_name_ = engine->getIOTensorName(1);
+
+    // 探测engine输出tensor形状，动态分配内存并自动推断模型结构
+    auto out_dims = engine->getTensorShape(output_name_.c_str());
+    output_size_ = 1;
+    std::cout << "[YOLOv8] Engine output shape: [";
+    for (int i = 0; i < out_dims.nbDims; ++i) {
+        output_size_ *= out_dims.d[i];
+        std::cout << out_dims.d[i];
+        if (i < out_dims.nbDims - 1) std::cout << ", ";
+    }
+    std::cout << "], total elements: " << output_size_ << std::endl;
+
+    // 标准YOLOv8输出格式: [batch, 4+num_classes, num_anchors]
+    if (out_dims.nbDims == 3) {
+        num_anchors_ = out_dims.d[2];
+        int channels = out_dims.d[1];
+        num_classes_ = channels - 4;
+        std::cout << "[YOLOv8] Auto-detected: num_classes=" << num_classes_
+                  << ", num_anchors=" << num_anchors_ << std::endl;
+    } else {
+        std::cerr << "[YOLOv8] Warning: unexpected output dims=" << out_dims.nbDims
+                  << ", post_process may fail" << std::endl;
+    }
+
+    // 分配所有内存（必须在setTensorAddress之前完成）
+    cudaMalloc((void**)&cuda_inputs, batch_size * 3 * input_h * input_w * sizeof(float));
+    cudaMalloc((void**)&cuda_outputs, output_size_ * sizeof(float));
+    host_outputs = new float[output_size_];
+
+    //AI修改 TRT10: 删除void** bindings，改用setTensorAddress按name绑定
+    context->setTensorAddress(input_name_.c_str(), cuda_inputs);
+    context->setTensorAddress(output_name_.c_str(), cuda_outputs);
 
     return 0;
 }
@@ -130,7 +156,7 @@ detector::YoloV8::infer(std::vector<cv::Mat>& raw_image_generator) {
     if (!status) {
         std::cerr << "Error: Inference execution failed" << std::endl;
     }
-    cudaMemcpyAsync(host_outputs, cuda_outputs, output_size * sizeof(float), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(host_outputs, cuda_outputs, output_size_ * sizeof(float), cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
     auto end                               = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
@@ -140,10 +166,10 @@ detector::YoloV8::infer(std::vector<cv::Mat>& raw_image_generator) {
     std::vector<std::vector<float>> det          = {};
 
     for (int i = 0; i < batch_size; ++i) {
-        //AI修改 硬编码38001改为output_size变量
-        auto output_offset = host_outputs + i * output_size;
+        //AI修改 使用动态探测的output_size_
+        auto output_offset = host_outputs + i * output_size_;
         auto post_result =
-            YoloV8::post_process(output_offset, raw_image_generator[i].cols, raw_image_generator[i].rows, output_size);
+            YoloV8::post_process(output_offset, raw_image_generator[i].cols, raw_image_generator[i].rows, output_size_);
         result_boxes.push_back(std::get<0>(post_result));
         result_scores.push_back(std::get<1>(post_result));
         result_classID.push_back(std::get<2>(post_result));
@@ -218,16 +244,27 @@ std::tuple<std::vector<float>, std::vector<float>, std::vector<int>> detector::Y
         return std::make_tuple(keep_boxes, keep_scores, keep_IDs);
     }
     for (size_t i = 0; i < scores.size(); ++i) {
-        // nms
         for (size_t j = i + 1; j < scores.size(); ++j) {
             if (scores[j] < threshold) {
                 scores[j] = 0;
                 continue;
             }
-            cv::Rect box1(boxes[i * 4], boxes[i * 4 + 1], boxes[i * 4 + 2], boxes[i * 4 + 3]);
-            cv::Rect box2(boxes[j * 4], boxes[j * 4 + 1], boxes[j * 4 + 2], boxes[j * 4 + 3]);
+            //AI修改 修复bug: boxes是xyxy格式，需先转成x,y,w,h才能正确构造cv::Rect
+            cv::Rect box1(
+                boxes[i * 4],
+                boxes[i * 4 + 1],
+                boxes[i * 4 + 2] - boxes[i * 4],
+                boxes[i * 4 + 3] - boxes[i * 4 + 1]
+            );
+            cv::Rect box2(
+                boxes[j * 4],
+                boxes[j * 4 + 1],
+                boxes[j * 4 + 2] - boxes[j * 4],
+                boxes[j * 4 + 3] - boxes[j * 4 + 1]
+            );
             float iou = bbox_iou(box1, box2);
-            if (iou > 0.5) {
+            //AI修改 使用成员变量NMS_THRESHOLD替代硬编码0.5
+            if (iou > NMS_THRESHOLD) {
                 if (scores[i] > scores[j]) {
                     scores[j] = 0;
                 } else {
@@ -252,40 +289,59 @@ std::tuple<std::vector<float>, std::vector<float>, std::vector<int>> detector::Y
 
 std::tuple<std::vector<float>, std::vector<float>, std::vector<int>>
 detector::YoloV8::post_process(float* output, int origin_w, int origin_h, int output_size) {
-    std::vector<float> boxes  = {};
-    std::vector<float> scores = {};
-    std::vector<float> det    = {};
-    std::vector<int> classID  = {};
+    std::vector<float> boxes;
+    std::vector<float> scores;
+    std::vector<int> classID;
 
-    float r_w = static_cast<float>(640) / origin_w;
-    float r_h = static_cast<float>(640) / origin_h;
+    //AI修改 标准Ultralytics YOLOv8输出格式: [batch, 4+num_classes, num_anchors]
+    const int num_channels = 4 + num_classes_;
 
-    // 通过缩放比例 r_w 和 r_h 判断是否基于宽或高进行缩放
-    float scale = (r_h > r_w) ? r_w : r_h;
-    float dw    = (640 - scale * origin_w) / 2; // 水平填充的宽度
-    float dh    = (640 - scale * origin_h) / 2; // 垂直填充的高度
+    // 安全检查并自适应anchor数量
+    int expected_size = batch_size * num_channels * num_anchors_;
+    if (output_size != expected_size) {
+        std::cerr << "[YOLOv8] Warning: output size mismatch! expected=" << expected_size
+                  << ", actual=" << output_size << std::endl;
+        if (output_size % (batch_size * num_channels) == 0) {
+            num_anchors_ = output_size / (batch_size * num_channels);
+            std::cerr << "[YOLOv8] Auto-adjusted num_anchors to " << num_anchors_ << std::endl;
+        }
+    }
 
-    int result_count = output[0];
+    // 计算letterbox参数，用于把640x640坐标映射回原图
+    float r_w = static_cast<float>(input_w) / origin_w;
+    float r_h = static_cast<float>(input_h) / origin_h;
+    float scale = std::min(r_w, r_h);
+    float dw = (input_w - scale * origin_w) / 2.0f;
+    float dh = (input_h - scale * origin_h) / 2.0f;
 
-    for (int i = 1; i < result_count * 38; i += 38) {
-        float score  = output[i + 4]; // 第5个元素是置信度
-        int classID_ = output[i + 5]; // 第6个元素是类别ID
-        if (score < 0.1)
-            continue;
+    // 遍历每个anchor
+    for (int i = 0; i < num_anchors_; ++i) {
+        // 读取xywh（模型输出是在640x640填充图像上的中心点+宽高）
+        float x = output[0 * num_anchors_ + i];
+        float y = output[1 * num_anchors_ + i];
+        float w = output[2 * num_anchors_ + i];
+        float h = output[3 * num_anchors_ + i];
 
-        // 获取缩放后的坐标
-        float x1 = output[i];
-        float y1 = output[i + 1];
-        float x2 = output[i + 2];
-        float y2 = output[i + 3];
+        // 找最高分类分数
+        float max_score = 0.0f;
+        int best_class = -1;
+        for (int c = 0; c < num_classes_; ++c) {
+            float score = output[(4 + c) * num_anchors_ + i];
+            if (score > max_score) {
+                max_score = score;
+                best_class = c;
+            }
+        }
 
-        // 去除填充并按比例还原坐标到原图
-        x1 = (x1 - dw) / scale;
-        y1 = (y1 - dh) / scale;
-        x2 = (x2 - dw) / scale;
-        y2 = (y2 - dh) / scale;
+        if (max_score < THRESHOLD) continue;
 
-        // 将坐标限制在图像边界内
+        // xywh(640x640) → xyxy(原图)，并去除letterbox填充
+        float x1 = (x - w / 2.0f - dw) / scale;
+        float y1 = (y - h / 2.0f - dh) / scale;
+        float x2 = (x + w / 2.0f - dw) / scale;
+        float y2 = (y + h / 2.0f - dh) / scale;
+
+        // 限制在图像边界内
         x1 = std::max(0.0f, std::min(x1, static_cast<float>(origin_w)));
         y1 = std::max(0.0f, std::min(y1, static_cast<float>(origin_h)));
         x2 = std::max(0.0f, std::min(x2, static_cast<float>(origin_w)));
@@ -295,12 +351,11 @@ detector::YoloV8::post_process(float* output, int origin_w, int origin_h, int ou
         boxes.push_back(y1);
         boxes.push_back(x2);
         boxes.push_back(y2);
-        scores.push_back(score);
-        classID.push_back(classID_); // 类别ID
+        scores.push_back(max_score);
+        classID.push_back(best_class);
     }
-    std::tuple<std::vector<float>, std::vector<float>, std::vector<int>> nms_result =
-        detector::YoloV8::non_max_suppression(boxes, scores, classID, 0.3);
-    return nms_result;
+
+    return non_max_suppression(boxes, scores, classID, THRESHOLD);
 }
 
 cv::Rect detector::YoloV8::clip_box(const cv::Rect& box, int origin_h, int origin_w) {

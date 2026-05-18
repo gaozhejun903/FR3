@@ -45,6 +45,10 @@ public:
         std::vector<std::vector<float>>>
     infer(std::vector<cv::Mat>& raw_image_generator);
 
+    //AI修改 把模型结构参数放到public，方便外部节点在init前配置
+    int num_classes_    = 80;
+    int num_anchors_    = 8400;
+
 private:
     /*
      * @brief 图像预处理
@@ -107,7 +111,7 @@ private:
     int batch_size      = 1;
     int input_h         = 640;
     int input_w         = 640;
-    int output_size     = 38001; // Adjust based on output size
+    int output_size_    = 0;      //AI修改 运行时从engine自动探测，替代固定38001
     float THRESHOLD     = 0.5;
     float NMS_THRESHOLD = 0.4;
     nvinfer1::ICudaEngine* engine;
