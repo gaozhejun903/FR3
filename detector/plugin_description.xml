@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<library path="lib/ibdetector.so">
+  <class name="detector::DetectorNode" base_class_type="rclcpp::Node">
+    <description>
+      Detector Node
+    </description>
+  </class>
+</library>

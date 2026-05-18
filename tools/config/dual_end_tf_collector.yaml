@@ -1,0 +1,21 @@
+# Dual End TF Collector Configuration
+
+dual_end_tf_collector:
+  ros__parameters:
+    # 数据保存路径
+    save_path: "/home/phoenix/roboarm/FairinoDualArm/tmp/dual_end_tf_data"
+    
+    # 自动采集设置
+    auto_capture: false
+    auto_capture_interval: 2000  # 毫秒
+    
+    # TF更新间隔
+    tf_update_interval: 100  # 毫秒
+    
+    # 坐标系设置
+    rend_frame_id: "Rend"          # 右臂末端坐标系
+    lend_frame_id: "Lend"          # 左臂末端坐标系
+    base_frame_id: "Lrobot_base"  # 基座坐标系
+    
+    # 日志级别
+    log_level: "INFO"

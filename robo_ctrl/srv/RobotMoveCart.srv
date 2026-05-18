@@ -1,0 +1,14 @@
+# 请求部分
+TCPPose tcp_pose  # TCP位姿，包含 x, y, z, rx, ry, rz
+int32 tool                 # 工具坐标系号，范围 [0-15]
+int32 user                 # 工件坐标系号，范围 [0-15]
+float64 velocity           # 速度百分比，范围 [0-100]
+float64 acceleration       # 加速度百分比，范围 [0-100]
+float64 ovl                # 速度缩放因子，范围 [0-100]
+float64 blend_time         # 混合时间，[-1.0]-运动到位(阻塞)，[0-500.0]-平滑时间(非阻塞)，单位ms
+int32 config               # 关节空间构型，[-1]-参考当前关节位置，[0-7]-参考特定关节空间构型，默认为-1
+bool use_increment         # 是否使用增量运动，true-增量运动，false-绝对运动
+---
+# 响应部分
+bool success               # 操作是否成功
+string message             # 返回消息或错误描述

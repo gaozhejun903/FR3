@@ -1,0 +1,74 @@
+# 静态TF配置文件 - 包含多个变换
+transforms:
+  # TCP到相机链接的变换
+  - frames:
+      parent: Ltcp
+      child: camera_link
+    # 位置参数 (单位: 米)
+    translation:
+      x: -0.01              # X轴平移
+      y: -0.09              # Y轴平移
+      z: 0.056              # Z轴平移
+    # 旋转参数 (单位: 度，使用RPY欧拉角)
+    rotation:
+      roll: 0
+      pitch: 0
+      yaw: 0
+      
+  # TCP到夹爪的变换
+  - frames:
+      parent: Ltcp
+      child: Lgripper
+    # 位置参数 (单位: 米)
+    translation:
+      x: 0.0
+      y: 0.0
+      z: 0.15
+    # 旋转参数 (单位: 度，使用RPY欧拉角)
+    rotation:
+      roll: 0
+      pitch: 0
+      yaw: 0
+      
+  # TCP到夹爪的变换
+  - frames:
+      parent: Rtcp
+      child: Rgripper
+    # 位置参数 (单位: 米)
+    translation:
+      x: 0.0
+      y: 0.0
+      z: 0.15
+    # 旋转参数 (单位: 度，使用RPY欧拉角)
+    rotation:
+      roll: 0
+      pitch: 0
+      yaw: 0
+
+  - frames:
+      parent: Rtcp
+      child: Rend
+  # 位置参数 (单位: 米)
+    translation:
+      x: 0.030650
+      y: -0.007066
+      z: 0.190848
+  # 旋转参数 (单位: 度，使用RPY欧拉角)
+    rotation:
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+
+  - frames:
+      parent: Ltcp
+      child: Lend
+  # 位置参数 (单位: 米)
+    translation:
+      x: -0.019899
+      y: -0.003972
+      z:  0.191327
+  # 旋转参数 (单位: 度，使用RPY欧拉角)
+    rotation:
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0

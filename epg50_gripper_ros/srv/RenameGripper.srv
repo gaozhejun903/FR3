@@ -1,0 +1,5 @@
+uint8 current_slave_id  # 当前从站ID，0表示使用默认ID
+uint8 target_slave_id   # 目标从站ID
+---
+bool success    # 操作是否成功
+string message  # 返回信息
