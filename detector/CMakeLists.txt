@@ -27,9 +27,6 @@ find_package(rosidl_default_generators REQUIRED)
 
 
 
-# 设置 TensorRT 相关路径
-set(TENSORRT_DIR /home/phoenix/TensorRT-8.6.1.6)
-
 # 添加消息定义 - 将消息生成目标改为${PROJECT_NAME}，与代码中使用的命名空间一致
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Bbox2d.msg"
@@ -43,7 +40,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 set(DETECTOR_SOURCES 
   src/detector_node.cpp
   src/yolov8.cpp
-  src/lw_detr.cpp
+  #AI修改 当前使用YOLOv8，DETR代码未适配TRT10，暂时不编译
+  # src/lw_detr.cpp
 )
 
 # 生成接口
@@ -57,7 +55,7 @@ target_include_directories(detector_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${CUDA_INCLUDE_DIRS}
-  ${TENSORRT_DIR}/include
+  #AI修改 删除了${TENSORRT_DIR}/include，TensorRT 10头文件已在系统默认路径
 )
 
 # 设置依赖项
@@ -77,8 +75,9 @@ target_link_libraries(detector_lib
   nvinfer
   nvinfer_plugin
   nvonnxparser
-  cudart
-  /home/phoenix/tensorrtx/yolov8/build/libmyplugins.so
+  #AI修改 删除裸cudart，${CUDA_LIBRARIES}已包含完整路径的libcudart
+  # cudart
+  #AI修改 删除了libmyplugins.so强制链接，标准导出的engine不需要自定义插件
   "${cpp_typesupport_target}"
 )
 

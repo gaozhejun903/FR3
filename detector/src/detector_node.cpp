@@ -5,8 +5,9 @@ namespace detector {
 detector_node::detector_node(const rclcpp::NodeOptions& options): Node("detector_node", options) {
 // 声明参数
 #ifdef USING_YOLOV8
-    this->declare_parameter("model_path", "/home/phoenix/roboarm/FairinoDualArm/src/detector/asserts/best_l.enging");
-    this->declare_parameter("plugin_path", "/home/phoenix/tensorrtx/yolov8/build/libmyplugins.so");
+    //AI修改 更新为用户的TRT10模型路径，plugin设为空（标准模型不需要）
+    this->declare_parameter("model_path", "/home/mihu/FR3_again/detector/best2.engine");
+    this->declare_parameter("plugin_path", "");
 #endif
 #ifdef USING_LW_DETR
     this->declare_parameter(

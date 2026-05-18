@@ -1,7 +1,7 @@
 #ifndef DETECTOR_NODE_HPP
 #define DETECTOR_NODE_HPP
-// # define USING_YOLOV8
-#define USING_LW_DETR
+#define USING_YOLOV8 //AI修改 切换为YOLOv8
+// #define USING_LW_DETR //AI修改 禁用DETR
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>

@@ -98,7 +98,8 @@ private:
 
     nvinfer1::IExecutionContext* context;
     cudaStream_t stream;
-    void** bindings;
+    std::string input_name_;   //AI修改 TRT10通过tensor name绑定输入
+    std::string output_name_;  //AI修改 TRT10通过tensor name绑定输出
     float* host_inputs;
     float* cuda_inputs;
     float* host_outputs;

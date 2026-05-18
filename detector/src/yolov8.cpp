@@ -11,31 +11,34 @@ class Logger: public nvinfer1::ILogger {
 } gLogger;
 
 detector::YoloV8::YoloV8() {
-    host_inputs  = new float[batch_size * 3 * input_h * input_w]; // 分配 host_inputs
-    host_outputs = new float[38001];
+    host_inputs  = new float[batch_size * 3 * input_h * input_w];
+    host_outputs = new float[output_size]; //AI修改 修复硬编码38001，改为变量
 }
 
 detector::YoloV8::~YoloV8() {
-    // Free CUDA memory
+    delete[] host_inputs;     //AI修改 补充释放host内存
+    delete[] host_outputs;    //AI修改 补充释放host内存
     cudaFree(cuda_inputs);
     cudaFree(cuda_outputs);
-    // Destroy stream
     cudaStreamDestroy(stream);
-    // Free bindings
-    free(bindings);
+    delete context;           //AI修改 TRT10: destroy()改为delete
+    delete engine;            //AI修改 TRT10: destroy()改为delete
+    delete runtime;           //AI修改 TRT10: destroy()改为delete
 }
 
 int detector::YoloV8::init(std::string engine_path, std::string plugin_path) {
 #ifndef PLUGIN_REGIST
     #define PLUGIN_REGIST
-    void* handle = dlopen(plugin_path.c_str(), RTLD_LAZY);
-    if (!handle) {
-        std::cerr << "Error loading plugin library: " << dlerror() << std::endl;
-        return -1;
+    //AI修改 标准导出的engine不需要自定义plugin，改为可选加载
+    if (!plugin_path.empty()) {
+        void* handle = dlopen(plugin_path.c_str(), RTLD_LAZY);
+        if (!handle) {
+            std::cerr << "Error loading plugin library: " << dlerror() << std::endl;
+            return -1;
+        }
     }
 #endif
 
-    // Load engine
     std::ifstream engine_file(engine_path, std::ios::binary);
     if (!engine_file) {
         std::cerr << "Error: Unable to open engine file" << std::endl;
@@ -44,21 +47,37 @@ int detector::YoloV8::init(std::string engine_path, std::string plugin_path) {
 
     initLibNvInferPlugins(&gLogger, "");
 
-    // Deserialize the engine and create context
     runtime = nvinfer1::createInferRuntime(gLogger);
-    std::ifstream file(engine_path, std::ios::binary);
-    std::vector<char> engine_data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    engine  = runtime->deserializeCudaEngine(engine_data.data(), engine_data.size(), nullptr);
+    std::vector<char> engine_data((std::istreambuf_iterator<char>(engine_file)), std::istreambuf_iterator<char>());
+    engine  = runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()); //AI修改 TRT10: 去掉第3个参数
+    //AI修改 TRT10: 增加空指针检查
+    if (!engine) {
+        std::cerr << "Error: Failed to deserialize CUDA engine" << std::endl;
+        return -1;
+    }
     context = engine->createExecutionContext();
-    // Allocate GPU memory
+    //AI修改 TRT10: 增加空指针检查
+    if (!context) {
+        std::cerr << "Error: Failed to create execution context" << std::endl;
+        return -1;
+    }
+
     cudaMalloc((void**)&cuda_inputs, batch_size * 3 * input_h * input_w * sizeof(float));
-    cudaMalloc((void**)&cuda_outputs, 38001 * sizeof(float)); // Output size based on model
+    cudaMalloc((void**)&cuda_outputs, output_size * sizeof(float));
 
     cudaStreamCreate(&stream);
 
-    bindings    = new void*[2];
-    bindings[0] = cuda_inputs;
-    bindings[1] = cuda_outputs;
+    //AI修改 TRT10: 删除void** bindings，改用setTensorAddress按name绑定
+    if (engine->getNbIOTensors() >= 2) {
+        input_name_  = engine->getIOTensorName(0);
+        output_name_ = engine->getIOTensorName(1);
+        context->setTensorAddress(input_name_.c_str(), cuda_inputs);
+        context->setTensorAddress(output_name_.c_str(), cuda_outputs);
+    } else {
+        std::cerr << "Error: Engine should have at least 1 input and 1 output" << std::endl;
+        return -1;
+    }
+
     return 0;
 }
 
@@ -101,9 +120,16 @@ detector::YoloV8::infer(std::vector<cv::Mat>& raw_image_generator) {
         stream
     );
 
-    // Execute the inference
+    //AI修改 TRT10: setInputShape替代setBindingDimensions
+    nvinfer1::Dims4 inputDims{batch_size, 3, input_h, input_w};
+    context->setInputShape(input_name_.c_str(), inputDims);
+
     auto start = std::chrono::high_resolution_clock::now();
-    context->enqueue(batch_size, bindings, stream, nullptr);
+    //AI修改 TRT10: enqueueV3替代enqueue
+    bool status = context->enqueueV3(stream);
+    if (!status) {
+        std::cerr << "Error: Inference execution failed" << std::endl;
+    }
     cudaMemcpyAsync(host_outputs, cuda_outputs, output_size * sizeof(float), cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
     auto end                               = std::chrono::high_resolution_clock::now();
@@ -114,9 +140,10 @@ detector::YoloV8::infer(std::vector<cv::Mat>& raw_image_generator) {
     std::vector<std::vector<float>> det          = {};
 
     for (int i = 0; i < batch_size; ++i) {
-        auto output_offset = host_outputs + i * 38001; // Adjust based on output size
+        //AI修改 硬编码38001改为output_size变量
+        auto output_offset = host_outputs + i * output_size;
         auto post_result =
-            YoloV8::post_process(output_offset, raw_image_generator[i].cols, raw_image_generator[i].rows, 38001);
+            YoloV8::post_process(output_offset, raw_image_generator[i].cols, raw_image_generator[i].rows, output_size);
         result_boxes.push_back(std::get<0>(post_result));
         result_scores.push_back(std::get<1>(post_result));
         result_classID.push_back(std::get<2>(post_result));
