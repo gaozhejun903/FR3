@@ -29,6 +29,13 @@ depth_handler::depth_node::depth_node(const rclcpp::NodeOptions& options): Node(
         std::bind(&depth_node::camera_info_callback, this, std::placeholders::_1)
     );
 
+    // AI-Deep修改: 订阅彩色相机内参，用于将2D检测框从color像素坐标对齐到depth像素坐标
+    color_camera_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
+        color_camera_info_topic_,
+        rclcpp::QoS(rclcpp::KeepLast(10)),
+        std::bind(&depth_node::color_camera_info_callback, this, std::placeholders::_1)
+    );
+
     // 使用消息过滤器同步检测结果和深度图像 - 修改为使用正确的QoS格式
     auto qos_profile = rclcpp::QoS(rclcpp::KeepLast(10)).get_rmw_qos_profile();
     bbox_sub_.subscribe(this, bbox2d_topic_, qos_profile);
@@ -59,7 +66,7 @@ void depth_handler::depth_node::callback(
         RCLCPP_INFO(this->get_logger(), "CameraInfo not received yet, subscribing to camera info topic");
         return;
     }
-    // 默认图像已经对齐
+    // AI-Deep修改: 通过alignBboxToDepth将color图像上的2D检测框像素级对齐到depth图像坐标系
     // 计算深度图像的宽高
     int width  = depthmsg->width;
     int height = depthmsg->height;
@@ -67,16 +74,8 @@ void depth_handler::depth_node::callback(
     std::vector<int> cluster_ids;
     for (int i = 0; i < static_cast<int>(detectmsg->results.size()); ++i) {
         auto bbox2d = detectmsg->results[i];
-        // 计算深度图像的 ROI
-        cv::Rect roi(bbox2d.x, bbox2d.y, bbox2d.width, bbox2d.height);
-        // roi = scale_bbox(roi, width, height, camera_info_.width, camera_info_.height);
-        // 检查 ROI 是否在图像范围内
-        if (roi.x < 0 || roi.y < 0 || roi.x + roi.width / 2 > width || roi.y + roi.height / 2 > height) {
-            RCLCPP_WARN(this->get_logger(), "ROI is out of image bounds");
-            continue;
-        }
 
-        // 将 ROS 图像转换为 OpenCV Mat
+        // AI-Deep修改: 将ROS深度图像转为cv::Mat(移到ROI计算之前，因为对齐函数需要读取深度值来估计深度)
         cv::Mat depth_img;
         if (depthmsg->encoding == "16UC1") {
             depth_img = cv::Mat(height, width, CV_16UC1, const_cast<uint8_t*>(depthmsg->data.data()));
@@ -86,6 +85,22 @@ void depth_handler::depth_node::callback(
             RCLCPP_ERROR(this->get_logger(), "Unsupported encoding: %s", depthmsg->encoding.c_str());
             return;
         }
+
+        // 计算深度图像的 ROI
+        cv::Rect roi(bbox2d.x, bbox2d.y, bbox2d.width, bbox2d.height);
+        // AI-Deep修改: 优先使用内参+外参进行像素级对齐(color→depth)，若color内参未就绪则回退到简单分辨率缩放
+        if (color_camera_info_received_ && extrinsics_initialized_) {
+            roi = alignBboxToDepth(roi, depth_img, width, height, depth_scale_);
+        } else if (color_image_width_ > 0 && color_image_height_ > 0
+            && (color_image_width_ != width || color_image_height_ != height)) {
+            roi = scale_bbox(roi, width, height, color_image_width_, color_image_height_);
+        }
+        // 检查 ROI 是否在图像范围内
+        if (roi.x < 0 || roi.y < 0 || roi.x + roi.width > width || roi.y + roi.height > height) {
+            RCLCPP_WARN(this->get_logger(), "ROI is out of image bounds");
+            continue;
+        }
+
         // 计算深度图像的方向
         points.push_back(depthToPoints(depth_img, pixel_directions_, roi, 0.001f));
         cluster_ids.push_back(detectmsg->results[i].class_id);
@@ -250,6 +265,99 @@ void depth_handler::depth_node::callback(
         // RCLCPP_INFO(this->get_logger(), "发布点云到 %s 坐标系, 点数: %zu", target_frame_.c_str(), all_points.size());
     }
 };
+
+// AI-Deep修改: 图像对齐实现——将彩色图上的2D检测框映射到深度图坐标系
+// 步骤:
+//   1) 用简单缩放估算bbox中心在depth图中的位置，读取粗略深度值
+//   2) 用粗略深度将bbox四个角点从color像素坐标反投影为3D点(在color相机坐标系)
+//   3) 通过外参(R_c2d, t_c2d)将3D点从color坐标系变换到depth坐标系
+//   4) 用depth内参将3D点投影到depth图像平面
+//   5) 取投影角点的外接矩形+边距作为对齐后的ROI
+cv::Rect depth_handler::depth_node::alignBboxToDepth(
+    const cv::Rect& color_bbox,
+    const cv::Mat& depth_img,
+    int depth_width, int depth_height,
+    float depth_scale
+) {
+    // AI-Deep修改: 估算bbox中心在depth图中的粗略3D深度
+    // 先按分辨率比例缩放中心点，从depth图读取该位置的深度值作为参考深度
+    float scale_x = static_cast<float>(depth_width) / static_cast<float>(color_image_width_);
+    float scale_y = static_cast<float>(depth_height) / static_cast<float>(color_image_height_);
+    int center_u_c = color_bbox.x + color_bbox.width / 2;
+    int center_v_c = color_bbox.y + color_bbox.height / 2;
+    int approx_u_d = static_cast<int>(center_u_c * scale_x);
+    int approx_v_d = static_cast<int>(center_v_c * scale_y);
+
+    float rough_depth = 1.0f; // AI-Deep修改: 默认1m，若能读取depth值则使用实际值
+    if (approx_u_d >= 0 && approx_u_d < depth_width && approx_v_d >= 0 && approx_v_d < depth_height) {
+        if (depth_img.type() == CV_16UC1) {
+            uint16_t raw = depth_img.at<uint16_t>(approx_v_d, approx_u_d);
+            if (raw > 0) rough_depth = static_cast<float>(raw) * depth_scale;
+        } else if (depth_img.type() == CV_32FC1) {
+            float raw = depth_img.at<float>(approx_v_d, approx_u_d);
+            if (raw > 0.0f) rough_depth = raw * depth_scale;
+        }
+    }
+    if (rough_depth <= 0.0f || std::isnan(rough_depth)) rough_depth = 1.0f;
+
+    // AI-Deep修改: bbox四个角点(在彩色图像像素坐标系)
+    std::vector<cv::Point2f> color_corners = {
+        cv::Point2f(color_bbox.x, color_bbox.y),
+        cv::Point2f(color_bbox.x + color_bbox.width, color_bbox.y),
+        cv::Point2f(color_bbox.x, color_bbox.y + color_bbox.height),
+        cv::Point2f(color_bbox.x + color_bbox.width, color_bbox.y + color_bbox.height)
+    };
+
+    std::vector<cv::Point2f> depth_corners;
+    for (const auto& corner : color_corners) {
+        // AI-Deep修改: 反投影color像素→3D点(在color相机坐标系下)
+        // P_c = [ (u-cx)/fx * z, (v-cy)/fy * z, z ]
+        Eigen::Vector3f P_c;
+        P_c.x() = (corner.x - cx_c_) / fx_c_ * rough_depth;
+        P_c.y() = (corner.y - cy_c_) / fy_c_ * rough_depth;
+        P_c.z() = rough_depth;
+
+        // AI-Deep修改: 通过外参将3D点从color坐标系变换到depth坐标系: P_d = R * P_c + t
+        Eigen::Vector3f P_d = R_c2d_ * P_c + t_c2d_;
+
+        // AI-Deep修改: 投影到depth图像平面: u = (x/z)*fx + cx, v = (y/z)*fy + cy
+        if (P_d.z() <= 0.0f) continue;
+        float u_d = (P_d.x() / P_d.z()) * fx_d_ + cx_d_;
+        float v_d = (P_d.y() / P_d.z()) * fy_d_ + cy_d_;
+
+        depth_corners.push_back(cv::Point2f(u_d, v_d));
+    }
+
+    // AI-Deep修改: 若投影失败(所有角点都在depth相机后方)，回退到简单缩放
+    if (depth_corners.empty()) {
+        cv::Rect fallback;
+        fallback.x      = static_cast<int>(color_bbox.x * scale_x);
+        fallback.y      = static_cast<int>(color_bbox.y * scale_y);
+        fallback.width  = static_cast<int>(color_bbox.width * scale_x);
+        fallback.height = static_cast<int>(color_bbox.height * scale_y);
+        return fallback;
+    }
+
+    // AI-Deep修改: 计算depth图像上投影角点的外接矩形
+    float min_u = depth_corners[0].x, max_u = depth_corners[0].x;
+    float min_v = depth_corners[0].y, max_v = depth_corners[0].y;
+    for (const auto& c : depth_corners) {
+        min_u = std::min(min_u, c.x);
+        max_u = std::max(max_u, c.x);
+        min_v = std::min(min_v, c.y);
+        max_v = std::max(max_v, c.y);
+    }
+
+    // AI-Deep修改: 扩展ROI边界以补偿粗略深度估计引入的误差和忽略的视差效应
+    int margin = 10;
+    cv::Rect aligned_roi;
+    aligned_roi.x      = std::max(0, static_cast<int>(min_u) - margin);
+    aligned_roi.y      = std::max(0, static_cast<int>(min_v) - margin);
+    aligned_roi.width  = std::min(depth_width - aligned_roi.x, static_cast<int>(max_u - min_u) + 2 * margin);
+    aligned_roi.height = std::min(depth_height - aligned_roi.y, static_cast<int>(max_v - min_v) + 2 * margin);
+
+    return aligned_roi;
+}
 
 std::vector<Eigen::Vector3f> depth_handler::depth_node::depthToPoints(
     const cv::Mat& depth_img,
@@ -457,6 +565,7 @@ bool depth_handler::depth_node::transformBoundingBox(
 void depth_handler::depth_node::declare_parameters() {
     // 主题相关参数
     this->declare_parameter<std::string>("camera_info_topic", camera_info_topic_);
+    this->declare_parameter<std::string>("color_camera_info_topic", color_camera_info_topic_); // AI-Deep修改: 彩色相机内参话题
     this->declare_parameter<std::string>("depth_topic", depth_topic_);
     this->declare_parameter<std::string>("image_topic", image_topic_);
     this->declare_parameter<std::string>("bbox3d_topic", bbox3d_topic_);
@@ -475,11 +584,15 @@ void depth_handler::depth_node::declare_parameters() {
     this->declare_parameter<float>("depth_scale", depth_scale_);
     this->declare_parameter<int>("min_points", min_points_);
     this->declare_parameter<float>("outlier_threshold", outlier_threshold_);
+    //AI修改 添加color图分辨率参数
+    this->declare_parameter<int>("color_image_width", color_image_width_);
+    this->declare_parameter<int>("color_image_height", color_image_height_);
 }
 
 void depth_handler::depth_node::update_parameters() {
     // 获取主题相关参数
     camera_info_topic_         = this->get_parameter("camera_info_topic").as_string();
+    color_camera_info_topic_   = this->get_parameter("color_camera_info_topic").as_string(); // AI-Deep修改
     depth_topic_               = this->get_parameter("depth_topic").as_string();
     image_topic_               = this->get_parameter("image_topic").as_string();
     bbox3d_topic_              = this->get_parameter("bbox3d_topic").as_string();
@@ -498,15 +611,21 @@ void depth_handler::depth_node::update_parameters() {
     depth_scale_       = this->get_parameter("depth_scale").as_double();
     min_points_        = this->get_parameter("min_points").as_int();
     outlier_threshold_ = this->get_parameter("outlier_threshold").as_double();
+    //AI修改 添加color图分辨率参数
+    color_image_width_  = this->get_parameter("color_image_width").as_int();
+    color_image_height_ = this->get_parameter("color_image_height").as_int();
 
     RCLCPP_INFO(this->get_logger(), "参数已更新:");
     RCLCPP_INFO(this->get_logger(), "  相机信息主题: %s", camera_info_topic_.c_str());
+    RCLCPP_INFO(this->get_logger(), "  彩色相机信息主题: %s", color_camera_info_topic_.c_str()); // AI-Deep修改
     RCLCPP_INFO(this->get_logger(), "  深度图主题: %s", depth_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  RGB图像主题: %s", image_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  3D边界框主题: %s", bbox3d_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  可视化: %s", enable_visualization_ ? "开启" : "关闭");
     RCLCPP_INFO(this->get_logger(), "  点云发布: %s", enable_pointcloud_ ? "开启" : "关闭");
     RCLCPP_INFO(this->get_logger(), "  深度缩放因子: %.6f", depth_scale_);
+    //AI修改
+    RCLCPP_INFO(this->get_logger(), "  Color图分辨率: %dx%d", color_image_width_, color_image_height_);
 }
 
 // 参数回调函数实现

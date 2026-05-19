@@ -51,6 +51,13 @@ private:
     bool camera_info_received_ = false;
     std::vector<Eigen::Vector3f> pixel_directions_;
     std::mutex camera_info_mutex_;
+    // AI-Deep修改: 彩色相机内参订阅和相关变量，用于将2D检测框从color像素坐标对齐到depth像素坐标
+    rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr color_camera_info_sub_;
+    sensor_msgs::msg::CameraInfo color_camera_info_;
+    bool color_camera_info_received_ = false;
+    // AI-Deep修改: 存储从camera_info提取的内参标量值，避免每次从k数组读取
+    float fx_c_ = 0.0f, fy_c_ = 0.0f, cx_c_ = 0.0f, cy_c_ = 0.0f; // 彩色相机内参
+    float fx_d_ = 0.0f, fy_d_ = 0.0f, cx_d_ = 0.0f, cy_d_ = 0.0f; // 深度相机内参
 
     // TF2相关变量
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -60,6 +67,8 @@ private:
 
     // 主题配置
     std::string camera_info_topic_         = "/camera/depth/camera_info";
+    // AI-Deep修改: 彩色相机内参话题，用于图像对齐
+    std::string color_camera_info_topic_   = "/camera/color/camera_info";
     std::string depth_topic_               = "/camera/depth/image_raw";
     std::string image_topic_               = "/camera/color/image_raw";
     std::string bbox3d_topic_              = "/depth_handler/bbox3d";
@@ -79,11 +88,19 @@ private:
     int min_points_          = 50;     // 最小点云数量，用于滤除噪声
     float outlier_threshold_ = 0.05f;  // 异常值阈值，用于点云过滤
 
+    //AI修改 添加color图分辨率参数，用于ROI缩放（color和depth分辨率不同时）
+    int color_image_width_   = 1280;   // 检测框来源图像的宽度
+    int color_image_height_  = 720;    // 检测框来源图像的高度
+
     // 修改数组声明，使用 std::array 而不是 auto 初始化列表
     std::array<float, 9> r = { 0.9999948740005493,     0.0013504032976925373,  -0.002899251179769635,
                                -0.0013477675383910537, 0.9999986886978149,     0.0009108961676247418,
                                0.0029004772659391165,  -0.0009069840307347476, 0.9999954104423523 };
     std::array<float, 3> t = { -0.014382616996765137, -0.00026784500479698183, -0.0017295591831207274 };
+    // AI-Deep修改: 外参的Eigen形式，用于图像对齐(P_d = R_c2d * P_c + t_c2d)
+    Eigen::Matrix3f R_c2d_;
+    Eigen::Vector3f t_c2d_;
+    bool extrinsics_initialized_ = false;
 
     // 参数服务回调处理
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;
@@ -106,6 +123,17 @@ private:
         // 保存或处理 camera_info
         camera_info_          = *msg;
         camera_info_received_ = true;
+        // AI-Deep修改: 提取深度相机内参用于图像对齐
+        fx_d_ = camera_info_.k[0];
+        fy_d_ = camera_info_.k[4];
+        cx_d_ = camera_info_.k[2];
+        cy_d_ = camera_info_.k[5];
+        // AI-Deep修改: 将外参std::array转换为Eigen矩阵(行主序→Eigen列主序)
+        R_c2d_ << r[0], r[1], r[2],
+                  r[3], r[4], r[5],
+                  r[6], r[7], r[8];
+        t_c2d_ << t[0], t[1], t[2];
+        extrinsics_initialized_ = true;
         // 计算像素方向
         pixel_directions_ = precomputePixelDirections(camera_info_.width, camera_info_.height, camera_info_);
         RCLCPP_INFO(this->get_logger(), "CameraInfo received, pixel directions precomputed");
@@ -113,6 +141,23 @@ private:
         // 收到一次后，取消订阅
         temp_camera_info_sub_.reset();
         RCLCPP_INFO(this->get_logger(), "CameraInfo subscription destroyed");
+    }
+
+    // AI-Deep修改: 彩色相机内参回调，用于将2D检测框从color像素坐标对齐到depth像素坐标
+    void color_camera_info_callback(const sensor_msgs::msg::CameraInfo::SharedPtr msg) {
+        RCLCPP_INFO(this->get_logger(), "Received Color CameraInfo once");
+        color_camera_info_ = *msg;
+        // AI-Deep修改: 提取彩色相机内参
+        fx_c_ = color_camera_info_.k[0];
+        fy_c_ = color_camera_info_.k[4];
+        cx_c_ = color_camera_info_.k[2];
+        cy_c_ = color_camera_info_.k[5];
+        color_camera_info_received_ = true;
+        RCLCPP_INFO(this->get_logger(), "Color CameraInfo: fx=%.2f fy=%.2f cx=%.2f cy=%.2f",
+                    fx_c_, fy_c_, cx_c_, cy_c_);
+        // AI-Deep修改: 收到一次后取消订阅
+        color_camera_info_sub_.reset();
+        RCLCPP_INFO(this->get_logger(), "Color CameraInfo subscription destroyed");
     }
 
     /*
@@ -209,6 +254,19 @@ private:
         scaled_bbox.height = bbox.height * height / img_height;
         return scaled_bbox;
     }
+
+    // AI-Deep修改: 图像对齐函数——将彩色图上的2D检测框映射到深度图坐标系
+    // 原理:
+    //   1) 用bbox中心在depth图中的粗略深度值反投影color角点到3D(color坐标系)
+    //   2) 通过外参(R_c2d, t_c2d)将3D点变换到depth坐标系
+    //   3) 用depth内参投影回depth图像平面
+    //   4) 取投影角点的外接矩形+边距，作为depth图上的ROI
+    cv::Rect alignBboxToDepth(
+        const cv::Rect& color_bbox,
+        const cv::Mat& depth_img,
+        int depth_width, int depth_height,
+        float depth_scale
+    );
 
     /*
      * @brief Convert a vector of Eigen::Vector3f points to a PointCloud2 message
