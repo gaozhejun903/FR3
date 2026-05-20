@@ -1,4 +1,64 @@
+
+
+
+
+
+
 # Robo Ctrl
+
+把 Fairino 官方 SDK (`libfairino`) 封装成 ROS2 节点的包。通过 TCP/IP 连接机械臂控制器，将私有协议翻译成标准 ROS2 话题和服务。
+
+## 核心概念
+
+```
+Fairino SDK (libfairino.so)
+  │  FRRobot: GetActualTCPPose(), MoveJ(), ServoCart()...
+  ▼
+robo_ctrl_node  ← 本包
+  │  话题:  /L/robot_state, /L/joint_states
+  │  TF:    world → Lrobot_base → Ltcp
+  │  服务:  /L/robot_move, /L/robot_servo...
+  ▼
+其他 ROS2 节点 (标定采集器, 规划器, rviz...)
+```
+
+## 启动
+
+```bash
+ros2 run robo_ctrl robo_ctrl_node --ros-args \
+  -p robot_ip:=192.168.58.2 \
+  -p robot_name:=L
+```
+
+### 参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `robot_ip` | `192.168.58.2` | 机械臂控制器 IP |
+| `robot_port` | `8080` | 通信端口，一般不需要改 |
+| `robot_name` | `FRRobot` | 话题/TF/服务的前缀，双臂系统设为 `L` / `R` |
+| `state_query_interval` | `0.01` | 状态轮询间隔(秒)，100Hz，一般不需要改 |
+
+## 启动后自动发布的内容
+
+**话题** (以 `robot_name=L` 为例，100Hz)：
+
+| 话题 | 消息类型 | 内容 |
+|---|---|---|
+| `/L/robot_state` | `RobotState` | TCP位姿(mm,度)、关节角度(度)、运动完成标志、错误码 |
+| `/L/joint_states` | `sensor_msgs/JointState` | 6 关节名(`j1`~`j6`) + 角度(弧度) |
+
+**TF 变换**：
+
+```
+world → Lrobot_base → Ltcp        (实时)
+                    → Ltarget_pose (最近一次 MoveCart 目标)
+```
+
+- L 臂 `world→Lrobot_base` 为单位变换（原点）；R 臂有偏移和旋转
+- TCP 数据自动完成单位转换：mm→m，欧拉角(度)→四元数
+
+---
 
 这个ROS 2包提供了控制Movecat机器人移动的服务接口。
 

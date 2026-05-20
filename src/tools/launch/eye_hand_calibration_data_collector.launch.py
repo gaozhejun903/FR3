@@ -61,7 +61,13 @@ def generate_launch_description():
         default_value='robot_base',
         description='机器人基座坐标系ID'
     )
-    
+
+    tcp_only_mode_arg = DeclareLaunchArgument(  # AI-Deep修改：添加tcp_only_mode启动参数
+        'tcp_only_mode',
+        default_value='false',
+        description='是否仅采集TCP位姿（不采集图像）'
+    )
+
     # 创建节点
     eye_hand_calibration_node = Node(
         package='tools',
@@ -77,6 +83,7 @@ def generate_launch_description():
             'auto_capture_interval': LaunchConfiguration('auto_capture_interval'),
             'camera_frame_id': LaunchConfiguration('camera_frame_id'),
             'robot_base_frame_id': LaunchConfiguration('robot_base_frame_id'),
+            'tcp_only_mode': LaunchConfiguration('tcp_only_mode'),  # AI-Deep修改
         }],
         output='screen',
         emulate_tty=True
@@ -92,5 +99,6 @@ def generate_launch_description():
         auto_capture_interval_arg,
         camera_frame_id_arg,
         robot_base_frame_id_arg,
+        tcp_only_mode_arg,  # AI-Deep修改
         eye_hand_calibration_node
     ])

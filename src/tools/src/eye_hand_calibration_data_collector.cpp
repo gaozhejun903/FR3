@@ -20,7 +20,7 @@ EyeHandCalibrationDataCollector::EyeHandCalibrationDataCollector(const rclcpp::N
     auto_capture_interval_ = this->declare_parameter<int>("auto_capture_interval", 2000); // 默认2秒
     camera_frame_id_       = this->declare_parameter<std::string>("camera_frame_id", "camera_color_optical_frame");
     robot_base_frame_id_   = this->declare_parameter<std::string>("robot_base_frame_id", "robot_base_link");
-    tcp_only_mode_         = this->declare_parameter<bool>("tcp_only_mode", true); // 默认true，保存图像和TCP
+    tcp_only_mode_         = this->declare_parameter<bool>("tcp_only_mode", false); // 默认false，保存图像和TCP (AI-Deep修改)
 
     robot_state_topic_ = this->get_parameter("robot_state_topic").as_string();
     RCLCPP_INFO(this->get_logger(),"Using RobotState topic: %s", robot_state_topic_.c_str());
@@ -116,9 +116,8 @@ EyeHandCalibrationDataCollector::EyeHandCalibrationDataCollector(const rclcpp::N
 
     RCLCPP_INFO(
         this->get_logger(),
-        "Eye-hand calibration data collector initialized in %s mode. Use '%s/capture_calibration_sample' service to trigger data capture.",
-        tcp_only_mode_ ? "TCP-only" : "Image+TCP",
-        this->get_fully_qualified_name()
+        "Eye-hand calibration data collector initialized in %s mode. Use 'ros2 service call /capture_calibration_sample std_srvs/srv/Trigger' to capture data.",
+        tcp_only_mode_ ? "TCP-only" : "Image+TCP"
     );
 }
 

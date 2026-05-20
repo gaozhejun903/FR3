@@ -145,49 +145,35 @@ def detect_aruco_markers(image_path, aruco_dict, marker_size, camera_matrix=None
         
         # 如果提供了相机参数，则估计姿态
         if camera_matrix is not None and dist_coeffs is not None:
-            # 使用对应版本的API估计姿态
-            try:
-                # 尝试新版本API
-                rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-                    corners, marker_size, camera_matrix, dist_coeffs)
-            except:
-                # 如果新版本API不可用，使用旧版本API
-                rvecs, tvecs = cv2.aruco.estimatePoseSingleMarkers(
-                    corners, marker_size, camera_matrix, dist_coeffs)
-            
-            # 在图像上绘制坐标轴
+            # OpenCV 4.7+ 移除了 estimatePoseSingleMarkers，改用 solvePnP
             for i in range(len(ids)):
-                try:
-                    cv2.drawFrameAxes(img_vis, camera_matrix, dist_coeffs, 
-                                      rvecs[i], tvecs[i], marker_size * 0.5)
-                except:
-                    # 旧版本可能没有drawFrameAxes
-                    cv2.aruco.drawAxis(img_vis, camera_matrix, dist_coeffs, 
-                                      rvecs[i], tvecs[i], marker_size * 0.5)
-            
-            # 创建世界坐标点和图像坐标点
-            objPoints = []
-            imgPoints = []
-            
-            for i in range(len(ids)):
-                # 为每个标记创建3D坐标 (方形标记的4个角点)
                 marker_objp = np.array([
                     [-marker_size/2, marker_size/2, 0],
                     [marker_size/2, marker_size/2, 0],
                     [marker_size/2, -marker_size/2, 0],
                     [-marker_size/2, -marker_size/2, 0]
                 ], dtype=np.float32)
-                
-                # 添加到世界坐标点列表
+                ret, rvec, tvec = cv2.solvePnP(marker_objp, corners[i][0], camera_matrix, dist_coeffs)
+                if ret:
+                    cv2.drawFrameAxes(img_vis, camera_matrix, dist_coeffs, rvec, tvec, marker_size * 0.5)
+
+            # 创建世界坐标点和图像坐标点
+            objPoints = []
+            imgPoints = []
+
+            for i in range(len(ids)):
+                marker_objp = np.array([
+                    [-marker_size/2, marker_size/2, 0],
+                    [marker_size/2, marker_size/2, 0],
+                    [marker_size/2, -marker_size/2, 0],
+                    [-marker_size/2, -marker_size/2, 0]
+                ], dtype=np.float32)
                 objPoints.append(marker_objp)
-                
-                # 添加检测到的角点到图像坐标点列表
                 imgPoints.append(corners[i][0])
-            
-            # 将列表转换为NumPy数组
+
             objPoints = np.concatenate(objPoints)
             imgPoints = np.concatenate(imgPoints)
-            
+
             return True, objPoints, imgPoints, img_vis
     
     return False, None, None, img_vis

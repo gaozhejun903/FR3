@@ -1,5 +1,29 @@
 # Detector 模块
 
+## 我做的内容
+
+- 将 YOLOv8 目标检测模型（`.pt`）转换为 TensorRT 引擎格式（`.engine`），使用 TensorRT 加速推理
+- 在 detector 节点中集成本地模型路径，支持通过 ROS 2 参数动态配置模型路径和置信度阈值
+- 修改了模型推理 API 及后处理逻辑，适配 YOLOv8 官方导出格式（学长的模型使用 `tensorrtx/yolov8` + `libmyplugins.so` 插件导出，我的模型使用 Ultralytics 官方方式导出，张量不同）：
+  - TensorRT API 从 TRT8 升级到 TRT10：`deserializeCudaEngine` 参数减少，索引绑定改为名称绑定（`setTensorAddress`），`enqueueV2` → `enqueueV3`
+  - 输出张量格式变化：插件版输出为自定义格式，官方导出为 `[batch, 4+num_classes, num_anchors]` 通道优先布局，需手动做中心点→角点解码、letterbox 坐标映射和 NMS
+  - 输出尺寸动态探测：去掉硬编码，改用 `getTensorShape()` 运行时自动推断 `num_classes` 和 `num_anchors`
+  - 移除 `libmyplugins.so` 强制链接，`dlopen` 仅在 `plugin_path` 非空时加载
+- 运行命令：
+
+```bash
+ros2 run detector detector_node_exe --ros-args \
+  -p confidence_threshold:=0.5 \
+  -p model_path:="/home/mihu/FR3_again/src/detector/best2.engine"
+```
+
+---
+
+#FR3
+
+
+# Detector 模块
+
 这个模块是飞利诺双臂机器人系统（Fairino Dual Arm）的目标检测组件，基于YOLOv8深度学习模型实现，提供实时物体识别功能。
 
 ## 功能特点

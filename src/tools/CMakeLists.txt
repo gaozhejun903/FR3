@@ -191,6 +191,7 @@ install(DIRECTORY
 # Install Python scripts
 install(PROGRAMS
   scripts/keyboard_ctrl.py
+  scripts/check_timestamp_sync.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

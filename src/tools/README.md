@@ -1,5 +1,40 @@
 # tools
 
+> 最后更新: 2026-05-20
+
+## ⚠️ 重要：TCP 未标定
+
+机器人当前未做 4 点 TCP 标定，`tcp_pose` 上报的是 **法兰位姿**（非夹爪尖端）。手眼标定结果实际为 **相机 → 法兰**。做 4 点 TCP 标定后需重新手眼标定才能得到 **相机 → 夹爪尖端**。
+
+## 手眼标定结果 (2026-05-20)
+
+眼在手上 | ArUco DICT_6X6_250 (0.1m) | TSAI | 13/13 有效
+
+```
+camera → flange (当前即法兰):
+  平移: [0.089, 0.010, 0.079] m    相机在法兰前方~9cm, 上方~8cm
+  旋转: rz ≈ -90°                  相机光轴与夹爪朝向一致
+
+结果文件: calibration_data/calibration_result_aruco_20260520_113046.json
+采集数据: calibration_data/ (images/ + poses/ × 13组)
+```
+
+## 新增工具
+
+**`scripts/check_timestamp_sync.py`** — 检查图像/机器人状态话题时间戳对齐
+
+```bash
+ros2 run tools check_timestamp_sync.py
+```
+验证结果: 平均偏差 ~33ms, 最大 ~65ms, 同步可用。
+
+## 已知问题
+
+- **TF warning** `Invalid frame ID "robot_base"`: 系统无 TF 发布者，不影响数据采集和标定
+- **服务名**: 用 `/capture_calibration_sample`，不加节点前缀。原因：代码中 `create_service("capture_calibration_sample")` 是相对路径，虽然全限定名是 `/eye_hand_calibration_data_collector/capture_calibration_sample`，但 `ros2 service call` 在全限定名上会等待 service introspection 事件，而 `SingleThreadedExecutor` + `message_filters` 同步回调阻塞了该事件的响应。直接用短路径 `/capture_calibration_sample` 避开了这个问题。
+
+---
+
 ## 概述
 `tools` 包是一个基于 ROS2 Humble 的工具集合，提供了手眼标定数据收集、坐标变换处理、TF工具等功能，辅助机器人系统的开发、调试和标定。
 
