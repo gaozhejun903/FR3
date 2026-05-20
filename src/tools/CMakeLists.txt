@@ -142,13 +142,13 @@ ament_target_dependencies(keyboard_tcp_controller_node
   tf2_geometry_msgs
 )
 
-# Create opencv_test executable for testing
-add_executable(opencv_test
-  src/opencv_test.cpp
-)
-ament_target_dependencies(opencv_test
-  OpenCV
-)
+# Create opencv_test executable for testing (AI-Deep修改：注释掉不存在的opencv_test.cpp)
+# add_executable(opencv_test
+#   src/opencv_test.cpp
+# )
+# ament_target_dependencies(opencv_test
+#   OpenCV
+# )
 
 # Install executables
 install(TARGETS
@@ -158,7 +158,7 @@ install(TARGETS
   tf_point_query_node  # 添加TF点位置查询节点
   dual_end_tf_collector_node  # 添加双臂末端TF收集器节点
   keyboard_tcp_controller_node  # 添加键盘控制器节点
-  opencv_test  # 添加OpenCV测试程序
+  # opencv_test  # 添加OpenCV测试程序 (AI-Deep修改：注释掉不存在的opencv_test)
   DESTINATION lib/${PROJECT_NAME}
 )
 
