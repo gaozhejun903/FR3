@@ -1,9 +1,4 @@
 
-
-
-
-
-
 # Robo Ctrl
 
 把 Fairino 官方 SDK (`libfairino`) 封装成 ROS2 节点的包。通过 TCP/IP 连接机械臂控制器，将私有协议翻译成标准 ROS2 话题和服务。
@@ -57,6 +52,71 @@ world → Lrobot_base → Ltcp        (实时)
 
 - L 臂 `world→Lrobot_base` 为单位变换（原点）；R 臂有偏移和旋转
 - TCP 数据自动完成单位转换：mm→m，欧拉角(度)→四元数
+
+## 运动控制：两层架构
+
+**底层 — `robo_ctrl_node`**：直接调用 SDK，轨迹规划由机械臂控制器内部完成。你只需给目标点。
+
+| 服务 | 对应 SDK | 用途 |
+|---|---|---|
+| `/L/robot_move` | `MoveJ` / `MoveL` | 关节或笛卡尔直线点到点 |
+| `/L/robot_move_cart` | `MoveCart` | 笛卡尔移动，支持增量/工具/用户坐标系 |
+| `/L/robot_servo` | `ServoJ` / `ServoCart` | 单步伺服指令，需先 Start 后 End |
+| `/L/robot_servo_line` | `ServoCart` (批量) | 笛卡尔路径，内部起线程逐点发送 |
+| `/L/robot_servo_joint` | `ServoJ` (批量) | 关节路径，同上 |
+| `/L/robot_set_speed` | `SetSpeed` | 全局速度百分比 (0-100) |
+
+伺服 vs 普通运动：伺服是高频控制模式（~1kHz），适合视觉伺服、力控等实时跟踪场景。
+
+**高层 — `high_level_node`**：在底层之上加轨迹规划，自己插值后再调用 servo 执行。
+
+```
+robot_act / robot_act_j       ← 你只调这个，给起点+终点
+       │
+       ▼
+  planner (直线SLERP / 圆弧Eigen)  ← 自己插值
+       │
+       ▼
+  robot_servo_line / robot_servo_joint ← 调底层执行
+```
+
+| 服务 | 用途 |
+|---|---|
+| `/L/robot_act` | 高层笛卡尔动作，plan_type=0 直线，=1 圆弧 |
+| `/L/robot_act_j` | 高层关节动作，自动插值 |
+
+另外 `high_level_node` 还会往 `trajectory_visualization` 发 Marker，可在 RViz 中看到轨迹。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ---
 

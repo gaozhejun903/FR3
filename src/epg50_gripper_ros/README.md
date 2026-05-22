@@ -166,9 +166,62 @@ std::string check_errors(uint8_t error_status)  // 根据错误码返回故障�
 - 响应完整性验证
 - 错误状态解析
 
+## 故障排查
+
+### 现象：节点初始化成功，但所有命令均返回失败
+
+```
+[INFO] [epg50_gripper]: 初始化EPG50夹爪, 端口: /dev/ttyUSB0, 默认从站ID: 0x09
+[INFO] [epg50_gripper]: EPG50夹爪节点已启动
+发送命令: 9 3 7 d0 0 4 45 cc
+等待响应...
+响应超时
+[WARN] [epg50_gripper]: 获取夹爪状态失败
+```
+
+此时 `ros2 service call` 调用 enable / set_parameters / status 全部返回 `success=False`。
+
+**原因：** 串口设备文件能正常 `open()`，所以节点初始化成功。但 Modbus RTU 命令发出后夹爪硬件无任何回复，说明物理通信链路不通。
+
+**排查顺序（按可能性从高到低）：**
+
+1. **夹爪没供电** — RS-485 转 USB 模块由 USB 口供电，但夹爪本体需要独立 24V 电源。检查夹爪电源指示灯是否亮起。
+2. **从站 ID 不匹配** — 默认从站 ID 为 `0x09`，如果夹爪此前被改过 ID（如通过 `/epg50_gripper/rename` 服务），发送给 `0x09` 的命令不会被响应。检查夹爪本体上是否有 ID 拨码开关或标签。
+3. **波特率不匹配** — 代码写死 `B115200`，如果夹爪固件使用其他波特率则无法通信。
+4. **RS-485 接线问题** — A+/B- 线可能接反，或 GND 未共地。
+5. **串口设备不对** — `/dev/ttyUSB0` 可能对应其他设备（如机械臂），而不是夹爪的 RS-485 转换器。插拔夹爪 USB 后用 `dmesg | tail` 或 `ls /dev/tty*` 确认实际设备名。
+6. **串口权限不足** — 非 root 用户需加入 `dialout` 组：`sudo usermod -aG dialout $USER`，重新登录后生效。
+
+### 测试命令
+
+```bash
+# 使能夹爪
+ros2 service call /epg50_gripper/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 0, command: 1, position: 0, speed: 0, torque: 0}"
+
+# 设置参数（位置、速度、力矩）
+ros2 service call /epg50_gripper/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 0, command: 2, position: 128, speed: 160, torque: 100}"
+
+# 查询状态
+ros2 service call /epg50_gripper/status epg50_gripper_ros/srv/GripperStatus \
+  "{slave_id: 0}"
+```
+
+### 启动命令
+
+```bash
+# 默认端口 /dev/ttyACM0
+ros2 launch epg50_gripper_ros launch.py
+
+# 指定端口
+ros2 launch epg50_gripper_ros launch.py port:=/dev/ttyUSB0
+```
+
 ## 注意事项
 
 1. 使用前请确保串口路径正确且有访问权限
 2. 不同型号的夹爪可能需要调整寄存器地址
 3. 在开始其他操作前，请先调用`enable()`使能夹爪
+4. 串口能打开 ≠ 通信正常，需观察 debug 输出中是否有"响应超时"
 

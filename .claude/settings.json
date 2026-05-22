@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dmesg)",
+      "Bash(ls -la /dev/ttyUSB0 2>/dev/null && echo \"设备已就绪\" || echo \"设备未找到\")",
+      "Read(//dev/**)",
+      "Bash(cat > *)",
+      "Bash(ls /opt/ros/ 2>/dev/null && echo \"---\" && ls /home/mihu/FR3_again/install/ 2>/dev/null && echo \"---\" && ls /home/mihu/FR3_again/build/ 2>/dev/null | head -20)",
+      "Read(//opt/ros/**)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}
