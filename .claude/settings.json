@@ -6,7 +6,10 @@
       "Read(//dev/**)",
       "Bash(cat > *)",
       "Bash(ls /opt/ros/ 2>/dev/null && echo \"---\" && ls /home/mihu/FR3_again/install/ 2>/dev/null && echo \"---\" && ls /home/mihu/FR3_again/build/ 2>/dev/null | head -20)",
-      "Read(//opt/ros/**)"
+      "Read(//opt/ros/**)",
+      "Bash(ros2 topic *)",
+      "Bash(python3)",
+      "Bash(rg -rn \"gripper\" /home/mihu/FR3_again/src/ -g '!build' -g '!install' -g '!log' -g '!__pycache__')"
     ],
     "additionalDirectories": [
       "/tmp"

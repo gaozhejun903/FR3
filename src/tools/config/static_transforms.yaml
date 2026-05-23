@@ -1,74 +1,94 @@
+# AI-kimi: 注释掉原有所有静态TF配置，替换为手眼标定结果 (calibration_data/combined_calibration.json)
 # 静态TF配置文件 - 包含多个变换
+
 transforms:
-  # TCP到相机链接的变换
+  # AI-kimi: ========== 以下为原始配置，已全部注释停用 ==========
+  # # TCP到相机链接的变换
+  # - frames:
+  #     parent: Ltcp
+  #     child: camera_link
+  #   # 位置参数 (单位: 米)
+  #   translation:
+  #     x: -0.01              # X轴平移
+  #     y: -0.09              # Y轴平移
+  #     z: 0.056              # Z轴平移
+  #   # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0
+  #     pitch: 0
+  #     yaw: 0
+  #
+  # # TCP到夹爪的变换
+  # - frames:
+  #     parent: Ltcp
+  #     child: Lgripper
+  #   # 位置参数 (单位: 米)
+  #   translation:
+  #     x: 0.0
+  #     y: 0.0
+  #     z: 0.15
+  #   # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0
+  #     pitch: 0
+  #     yaw: 0
+  #
+  # # TCP到夹爪的变换
+  # - frames:
+  #     parent: Rtcp
+  #     child: Rgripper
+  #   # 位置参数 (单位: 米)
+  #   translation:
+  #     x: 0.0
+  #     y: 0.0
+  #     z: 0.15
+  #   # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0
+  #     pitch: 0
+  #     yaw: 0
+  #
+  # - frames:
+  #     parent: Rtcp
+  #     child: Rend
+  # # 位置参数 (单位: 米)
+  #   translation:
+  #     x: 0.030650
+  #     y: -0.007066
+  #     z: 0.190848
+  # # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0.0
+  #     pitch: 0.0
+  #     yaw: 0.0
+  #
+  # - frames:
+  #     parent: Ltcp
+  #     child: Lend
+  # # 位置参数 (单位: 米)
+  #   translation:
+  #     x: -0.019899
+  #     y: -0.003972
+  #     z:  0.191327
+  # # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0.0
+  #     pitch: 0.0
+  #     yaw: 0.0
+
+  # AI-kimi: ========== 新增标定结果 ==========
+  # AI-kimi: 数据来源: calibration_data/combined_calibration.json -> hand_eye_calibration -> ltcp_to_camera
+  # AI-kimi: 描述: 左臂TCP (Ltcp) 到相机 (camera_link) 的手眼标定变换
   - frames:
       parent: Ltcp
       child: camera_link
-    # 位置参数 (单位: 米)
+    # AI-kimi: 位置参数 (单位: 米)
     translation:
-      x: -0.01              # X轴平移
-      y: -0.09              # Y轴平移
-      z: 0.056              # Z轴平移
-    # 旋转参数 (单位: 度，使用RPY欧拉角)
+      x: 0.011550205535439057
+      y: -0.08829998528743548
+      z: -0.08037542431989243
+    # AI-kimi: 旋转参数 (单位: 度，使用RPY欧拉角 XYZ顺序)
     rotation:
-      roll: 0
-      pitch: 0
-      yaw: 0
-      
-  # TCP到夹爪的变换
-  - frames:
-      parent: Ltcp
-      child: Lgripper
-    # 位置参数 (单位: 米)
-    translation:
-      x: 0.0
-      y: 0.0
-      z: 0.15
-    # 旋转参数 (单位: 度，使用RPY欧拉角)
-    rotation:
-      roll: 0
-      pitch: 0
-      yaw: 0
-      
-  # TCP到夹爪的变换
-  - frames:
-      parent: Rtcp
-      child: Rgripper
-    # 位置参数 (单位: 米)
-    translation:
-      x: 0.0
-      y: 0.0
-      z: 0.15
-    # 旋转参数 (单位: 度，使用RPY欧拉角)
-    rotation:
-      roll: 0
-      pitch: 0
-      yaw: 0
-
-  - frames:
-      parent: Rtcp
-      child: Rend
-  # 位置参数 (单位: 米)
-    translation:
-      x: 0.030650
-      y: -0.007066
-      z: 0.190848
-  # 旋转参数 (单位: 度，使用RPY欧拉角)
-    rotation:
-      roll: 0.0
-      pitch: 0.0
-      yaw: 0.0
-
-  - frames:
-      parent: Ltcp
-      child: Lend
-  # 位置参数 (单位: 米)
-    translation:
-      x: -0.019899
-      y: -0.003972
-      z:  0.191327
-  # 旋转参数 (单位: 度，使用RPY欧拉角)
-    rotation:
-      roll: 0.0
-      pitch: 0.0
-      yaw: 0.0
+      roll: -0.8156816220768173
+      pitch: -0.7108002290829644
+      yaw: 89.99182846092766

@@ -25,6 +25,34 @@
 #include <tf2/convert.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
+// AI-kimi: 为自定义消息特化 message_filters::message_traits，修复 ApproximateTime 策略无法提取时间戳的问题
+// AI-kimi: 原因: HasHeader 的默认 SFINAE 对非静态成员变量 header 无效，导致 TimeStamp 返回零时间戳，同步永远失败
+namespace message_filters {
+namespace message_traits {
+
+template<>
+struct HasHeader<detector::msg::Bbox2dArray> : std::true_type {};
+
+template<>
+struct TimeStamp<detector::msg::Bbox2dArray> {
+    static rclcpp::Time value(const detector::msg::Bbox2dArray& m) {
+        return rclcpp::Time(m.header.stamp, RCL_ROS_TIME);
+    }
+};
+
+template<>
+struct HasHeader<sensor_msgs::msg::Image> : std::true_type {};
+
+template<>
+struct TimeStamp<sensor_msgs::msg::Image> {
+    static rclcpp::Time value(const sensor_msgs::msg::Image& m) {
+        return rclcpp::Time(m.header.stamp, RCL_ROS_TIME);
+    }
+};
+
+} // namespace message_traits
+} // namespace message_filters
+
 namespace depth_handler {
 class depth_node: public rclcpp::Node {
 public:
@@ -93,10 +121,13 @@ private:
     int color_image_height_  = 720;    // 检测框来源图像的高度
 
     // 修改数组声明，使用 std::array 而不是 auto 初始化列表
-    std::array<float, 9> r = { 0.9999948740005493,     0.0013504032976925373,  -0.002899251179769635,
-                               -0.0013477675383910537, 0.9999986886978149,     0.0009108961676247418,
-                               0.0029004772659391165,  -0.0009069840307347476, 0.9999954104423523 };
-    std::array<float, 3> t = { -0.014382616996765137, -0.00026784500479698183, -0.0017295591831207274 };
+    // AI-Deep修改: 从当前相机tf_static读取外参替换学长旧值 (camera_color_optical_frame -> camera_depth_optical_frame)
+    std::array<float, 9> r = {
+        0.9999970075694583, -0.0020597721428680, -0.0013199207733843,
+        0.0020633670703027,  0.9999941501281783,  0.0027280443096542,
+        0.0013142939023434, -0.0027307596272303,  0.9999954077811539
+    };
+    std::array<float, 3> t = { -0.0000005756863482, 0.0017500719179622, -0.0136695736013385 };
     // AI-Deep修改: 外参的Eigen形式，用于图像对齐(P_d = R_c2d * P_c + t_c2d)
     Eigen::Matrix3f R_c2d_;
     Eigen::Vector3f t_c2d_;

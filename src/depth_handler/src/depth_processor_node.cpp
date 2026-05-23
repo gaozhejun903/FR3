@@ -97,12 +97,23 @@ void depth_handler::depth_node::callback(
         }
         // 检查 ROI 是否在图像范围内
         if (roi.x < 0 || roi.y < 0 || roi.x + roi.width > width || roi.y + roi.height > height) {
-            RCLCPP_WARN(this->get_logger(), "ROI is out of image bounds");
+            // AI-Deep修改: 增加更详细的丢弃原因日志
+            RCLCPP_WARN(this->get_logger(), "bbox[%d] class_id=%d ROI out of bounds, DROPPED",
+                        i, bbox2d.class_id);
             continue;
         }
 
         // 计算深度图像的方向
-        points.push_back(depthToPoints(depth_img, pixel_directions_, roi, 0.001f));
+        // AI-Deep修改: 先获取聚类后的点云，加入诊断日志来定位被丢弃的目标
+        auto roi_points = depthToPoints(depth_img, pixel_directions_, roi, 0.001f);
+        RCLCPP_INFO(this->get_logger(), "bbox[%d] class_id=%d: roi=(%d,%d,%d,%d) depth_points=%zu",
+                    i, bbox2d.class_id, roi.x, roi.y, roi.width, roi.height, roi_points.size());
+        if (roi_points.empty()) {
+            RCLCPP_WARN(this->get_logger(), "bbox[%d] class_id=%d depthToPoints empty (cluster < 3000?), DROPPED",
+                        i, bbox2d.class_id);
+            continue;
+        }
+        points.push_back(roi_points);
         cluster_ids.push_back(detectmsg->results[i].class_id);
     }
     std::vector<Eigen::Vector3f> all_points;

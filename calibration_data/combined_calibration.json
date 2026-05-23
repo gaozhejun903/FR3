@@ -1,0 +1,71 @@
+{
+  "description": "Left arm combined calibration (hand-eye + TCP)",
+  "date": "2026-05-23",
+  "tcp_calibration": {
+    "method": "4-point",
+    "frame": "ltcp -> gripper_tip",
+    "translation_m": {
+      "x": -0.0399,
+      "y": 0.002,
+      "z": 0.17692
+    },
+    "translation_mm": {
+      "x": -39.9,
+      "y": 2.0,
+      "z": 176.92
+    },
+    "rms_mm": 4.767
+  },
+  "hand_eye_calibration": {
+    "method": "tsai",
+    "source_file": "calibration_result_aruco_20260520_113046.json",
+    "camera_to_ltcp": {
+      "translation_m": {
+        "x": 0.08928863866014822,
+        "y": 0.010433096427652814,
+        "z": 0.07943042861160798
+      },
+      "euler_xyz_deg": {
+        "roll": -0.7106838902183922,
+        "pitch": 0.815782985695918,
+        "yaw": -89.99182826144823
+      }
+    },
+    "ltcp_to_camera": {
+      "translation_m": {
+        "x": 0.011550205535439057,
+        "y": -0.08829998528743548,
+        "z": -0.08037542431989243
+      },
+      "euler_xyz_deg": {
+        "roll": -0.8156816220768173,
+        "pitch": -0.7108002290829644,
+        "yaw": 89.99182846092766
+      }
+    }
+  },
+  "camera_to_gripper_tip": {
+    "translation_m": {
+      "x": 0.09347757322927924,
+      "y": 0.04781127756553572,
+      "z": 0.2568621642227978
+    },
+    "euler_xyz_deg": {
+      "roll": -0.7106838902183922,
+      "pitch": 0.815782985695918,
+      "yaw": -89.99182826144823
+    }
+  },
+  "gripper_tip_to_camera": {
+    "translation_m": {
+      "x": 0.051450205535439046,
+      "y": -0.09029998528743548,
+      "z": -0.2572954243198924
+    },
+    "euler_xyz_deg": {
+      "roll": -0.8156816220768173,
+      "pitch": -0.7108002290829644,
+      "yaw": 89.99182846092766
+    }
+  }
+}
