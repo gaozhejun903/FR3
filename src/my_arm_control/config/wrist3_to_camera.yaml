@@ -1,0 +1,17 @@
+# 静态TF: wrist3_link → camera_link
+# 相机固定在机械臂末端（wrist3_link）上的安装偏移
+# 复用自 dual-arm 项目中 Ltcp → camera_link 的参数
+transforms:
+  - frames:
+      parent: wrist3_link
+      child: camera_link
+    # 位置参数 (单位: 米)
+    translation:
+      x: -0.01              # X轴平移 (前后)
+      y: -0.09              # Y轴平移 (左右)
+      z: 0.056              # Z轴平移 (上下)
+    # 旋转参数 (单位: 度)
+    rotation:
+      roll: 0
+      pitch: 0
+      yaw: 0

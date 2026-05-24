@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fairino3_v6_robot">
+    <!--
+        仿真版 URDF — 使用 fake_components/GenericSystem 替代真实硬件驱动。
+        仅含几何 + 运动学 + ros2_control fake 硬件。
+    -->
+
+    <!-- 包含原始 URDF（link / joint / 几何 / 碰撞） -->
+    <xacro:include filename="$(find fairino_description)/urdf/fairino3_v6.urdf" />
+
+    <!-- ros2_control 仿真硬件 -->
+    <ros2_control name="FakeSystem" type="system">
+        <hardware>
+            <plugin>fake_components/GenericSystem</plugin>
+        </hardware>
+        <joint name="j1">
+            <command_interface name="position">
+                <param name="initial_value">0.0</param>
+            </command_interface>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+        </joint>
+        <joint name="j2">
+            <command_interface name="position">
+                <param name="initial_value">0.0</param>
+            </command_interface>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+        </joint>
+        <joint name="j3">
+            <command_interface name="position">
+                <param name="initial_value">0.0</param>
+            </command_interface>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+        </joint>
+        <joint name="j4">
+            <command_interface name="position">
+                <param name="initial_value">0.0</param>
+            </command_interface>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+        </joint>
+        <joint name="j5">
+            <command_interface name="position">
+                <param name="initial_value">0.0</param>
+            </command_interface>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+        </joint>
+        <joint name="j6">
+            <command_interface name="position">
+                <param name="initial_value">0.0</param>
+            </command_interface>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+        </joint>
+    </ros2_control>
+</robot>
