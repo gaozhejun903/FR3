@@ -1,0 +1,18 @@
+# ROS2 编译产物
+build/
+install/
+log/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+*.pyc
+__pycache__/
+*.swp
+*~
+.DS_Store
+
+# Zone.Identifier 文件（Windows 传输产生）
+*:Zone.Identifier

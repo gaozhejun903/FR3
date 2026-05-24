@@ -1,0 +1,17 @@
+# 请求部分
+int32 command_type         # 命令类型：0=ServoMoveStart, 1=ServoMoveEnd, 2=ServoJ, 3=ServoCart
+float64[] joint_positions  # ServoJ的关节位置数组，单位：度
+float64 acc                # 加速度百分比 0-100
+float64 vel                # 速度百分比 0-100
+float64 cmd_time           # 指令传递周期，单位：秒，推荐范围 [0.001-0.0016]
+float64 filter_time        # 滤波时间，单位：秒
+float64 gain               # 目标位置比例放大器，默认为0
+
+# ServoCart 特有参数
+int32 mode                 # ServoCart模式：0=绝对运动(基座标系)，1=增量运动(基座标系)，2=增量运动(工具坐标系)
+float64[] cartesian_pose   # 笛卡尔位姿数组 [x, y, z, rx, ry, rz]
+float64[] pos_gain         # 位姿增量比例系数，仅对增量运动有效，范围 [0-1]，6个元素分别对应[x, y, z, rx, ry, rz]
+---
+# 响应部分
+bool success               # 操作是否成功
+string message             # 返回消息或错误描述

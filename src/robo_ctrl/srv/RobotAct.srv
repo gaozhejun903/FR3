@@ -1,0 +1,16 @@
+int32 command_type        # 命令类型：0=ServoMoveStart, 1=ServoMoveEnd
+TCPPose tcp_pose         # TCP位姿
+int32 point_count       # 轨迹点数
+float32 message_time        # 单步运动时间
+int32 plan_type         # 轨迹规划类型：0=直线 1=圆弧
+bool use_incremental # 是否使用增量运动模式，true=增量运动(基坐标系)，false=绝对运动(基坐标系)
+
+# 圆弧规划专用
+geometry_msgs/Point circle_center # 圆中点坐标
+# 弧度
+float64 radian # 圆弧弧度
+geometry_msgs/Vector3 initial_orientation # 初始切线方向
+bool face_center       # 是否面向圆心 True=面向圆心, False=顺向
+---
+bool success             # 操作是否成功
+string message           # 返回消息或错误描述

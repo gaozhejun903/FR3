@@ -1,0 +1,7 @@
+<library path="robo_ctrl_fairino_hardware">
+  <class
+    type="robo_ctrl::FairinoHardwareInterface"
+    base_class_type="hardware_interface::SystemInterface"
+    description="Fairino robot hardware interface for ros2_control — connects to real robot via RPC (libfairino) and streams joint commands via ServoJ">
+  </class>
+</library>

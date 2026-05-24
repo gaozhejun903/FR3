@@ -1,0 +1,9 @@
+int32 command_type        # 命令类型：0=ServoJStart, 1=ServoJEnd
+float64[] target_joints  # 目标关节角度数组
+int32 point_count        # 轨迹点数
+float32 message_time     # 单步运动时间
+bool use_incremental # 是否使用增量运动模式，true=增量运动(基坐标系)，false=绝对运动(基坐标系)
+
+---
+bool success             # 操作是否成功
+string message           # 返回消息或错误描述
