@@ -2,6 +2,8 @@
 build/
 install/
 log/
+src/*/lib/
+src/*/*.egg-info/
 
 # IDE
 .vscode/

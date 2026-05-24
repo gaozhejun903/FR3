@@ -13,6 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob(os.path.join(os.path.dirname(__file__), 'launch', '*.launch.py'))),
+        (os.path.join('lib', package_name),
+            glob(os.path.join('lib', package_name, '*'))),
     ],
     install_requires=['setuptools', 'pyserial'],
     zip_safe=True,
@@ -25,6 +27,9 @@ setup(
             'virtual_vision_node = my_arm_control.virtual_vision_node:main',
             'arm_task_node = my_arm_control.arm_task_manager:main',
             'fake_vision_node = my_arm_control.fake_vision_node:main',
+            'mock_robo_ctrl_node = my_arm_control.mock_robo_ctrl_node:main',
+            'virtual_vision_task1 = my_arm_control.virtual_vision_task1:main',
+            'task1_pour_service = my_arm_control.task1_pour_service:main',
         ],
     },
 )

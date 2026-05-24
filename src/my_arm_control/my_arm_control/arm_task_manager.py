@@ -17,6 +17,7 @@ from typing import Optional, List, Dict
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 
 
 class TaskState(Enum):
@@ -111,6 +112,9 @@ class ArmTaskManager(Node):
         # ====== 参数 ====================================================
         self.declare_parameter("use_moveit", False)
         self._use_moveit = self.get_parameter("use_moveit").value
+
+        self.declare_parameter("use_virtual_vision", False)
+        self._use_virtual_vision = self.get_parameter("use_virtual_vision").value
 
         # 机器人命名空间前缀 (实机模式)
         self.declare_parameter("robot_prefix", "/L")
@@ -264,6 +268,20 @@ class ArmTaskManager(Node):
                 PoseStamped, "target_pose", self._target_pose_cb, 10
             )
             self.get_logger().info("仿真模式: 已订阅 target_pose")
+        elif self._use_virtual_vision:
+            # 虚拟视觉: 订阅 target_pose (来自 virtual_vision_node)
+            from geometry_msgs.msg import PoseStamped
+            self._pose_sub = self.create_subscription(
+                PoseStamped, "target_pose", self._target_pose_cb, 10
+            )
+            from robo_ctrl.msg import RobotState
+            self._state_sub = self.create_subscription(
+                RobotState, f"{prefix}/robot_state", self._robot_state_cb, 10
+            )
+            self._R_state_sub = self.create_subscription(
+                RobotState, "/R/robot_state", self._R_robot_state_cb, 10
+            )
+            self.get_logger().info("虚拟视觉模式: 已订阅 target_pose + 左右臂状态")
         else:
             # 实机: 订阅 bbox3d (来自 depth_handler)
             from depth_handler.msg import Bbox3dArray
@@ -503,8 +521,8 @@ class ArmTaskManager(Node):
                 return
 
             # 2. 获取目标
-            if self._use_moveit:
-                # 仿真: 直接使用收到的 target_pose
+            if self._use_moveit or self._use_virtual_vision:
+                # 仿真/虚拟视觉: 直接使用收到的 target_pose
                 target_pose = getattr(self, '_pending_pose', None)
                 if target_pose is None:
                     self.get_logger().error("无目标位姿")
@@ -1284,6 +1302,8 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().info("手动中断")
+    except ExternalShutdownException:
+        pass
     finally:
         node.destroy_node()
         try:

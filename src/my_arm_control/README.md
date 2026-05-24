@@ -248,6 +248,267 @@ ros2 launch my_arm_control real_hardware.launch.py task_mode:=opencap
 
 ## 比赛进度
 
+---
+
+# Task 1: 双臂倒水服务 (pour_service)
+
+**2026 中国高校智能机器人创意大赛 — 双臂组任务一**
+
+双臂机器人自主识别饮品（怡宝/可乐）和水杯，一手持瓶一手持杯倒水，最后将瓶和杯放回原位。
+
+## 架构
+
+```
+视觉节点 (virtual_vision_task1 / 真实视觉)
+    ↓ 4× PoseStamped (/vision/bottle_water, /vision/bottle_cola, /vision/cup_1, /vision/cup_2)
+    ↓ frame_id: camera_depth_frame
+TF 坐标变换 (static_transform_publisher → tf2_ros Buffer)
+    ↓ camera_depth_frame → base_link
+task1_pour_service (状态机)
+    ↓ RobotMoveCart / RobotAct / RobotActJ / GripperCommand
+左臂 mock_robo_ctrl_L (或者真实 robo_ctrl_L)    右臂 mock_robo_ctrl_R (或者真实 robo_ctrl_R)
+```
+
+## 状态机流程
+
+```
+IDLE → OBSERVE → WAIT_VISION → GRASP_BOTTLE → GRASP_CUP
+  → OPEN_CAP → POUR → PLACE_BOTTLE → PLACE_CUP
+  → NEXT_DRINK → (重复) → DONE
+```
+
+| Phase | 名称 | 操作 | 臂 |
+|-------|------|------|-----|
+| 1 | OBSERVE | 左臂移到观测位，看清台面 | L |
+| 2 | GRASP_BOTTLE | 增量运动到瓶上方 → 夹紧 → 垂直撤离 | L |
+| 3 | GRASP_CUP | 增量运动到杯上方 → 夹紧 → 垂直撤离 | R |
+| 4 | OPEN_CAP | 左臂移拧盖位夹瓶盖 → J6旋转2圈 → 松开 → 回退 | L |
+| 5 | POUR | 左臂J6倾斜倒水 → 回正 | L |
+| 6 | PLACE_BOTTLE | 增量回到瓶原始位置 → 释放 → 撤退 | L |
+| 7 | PLACE_CUP | 增量回到杯原始位置 → 释放 → 撤退 | R |
+| 8 | NEXT_DRINK | 处理下一饮品 (water → cola) | — |
+
+## 关键参数
+
+所有参数在 `launch/task1_pour_service.launch.py` 中配置：
+
+### 高度参数 (mm)
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `desk_height` | 360.0 | 机器人基座到桌面高度 (需示教) |
+| `bottle_height` | 180.0 | 瓶子高度 (瓶底到瓶盖顶部) |
+| `cup_height` | 120.0 | 水杯高度 (杯底到杯口) |
+| `approach_offset_z` | 150.0 | 接近物体时 TCP 高出物体顶部的距离 |
+| `retreat_z` | 80.0 | 抓取后垂直撤离高度 (mm) |
+
+### 运动参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `velocity` | 50.0 | 笛卡尔运动速度 (%) |
+| `acceleration` | 50.0 | 笛卡尔运动加速度 (%) |
+| `observe_pose` | [99.9, -144.2, 542.6, -125.4, 0, -100.5] | 观测位姿 [x,y,z,rx,ry,rz] (需示教) |
+| `collision_safety_distance` | 100.0 | 两臂TCP最小安全距离 (mm)，低于此值阻止运动 |
+
+### 拧瓶盖参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `cap_open_joints_l` | [-55, -90, -120, 30, 81.3, 0] | 左臂拧盖抓瓶关节角 [j1~j6] (需示教) |
+| `cap_open_joints_r` | [45.4, -124.6, 128.4, -184.3, 19.2, 0] | 右臂拧盖抓盖关节角 [j1~j6] (需示教) |
+| `pour_j6_angle` | 60.0 | 倒水时 J6 倾斜角度 (度, 需示教) |
+
+### 夹爪参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `gripper_id_L` | 9 | 左臂夹爪 Modbus ID |
+| `gripper_id_R` | 10 | 右臂夹爪 Modbus ID |
+
+### 饮品顺序
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `drink_order` | ["water", "cola"] | 处理顺序 |
+
+### TF 坐标变换
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `target_frame` | "base_link" | 控制用坐标系 |
+| `vision_frame` | "camera_depth_frame" | 视觉数据原始坐标系 |
+| `tf_timeout` | 1.0 | TF 查询超时 (秒) |
+
+## 需要示教的点 (实机部署前)
+
+在使用实机前，需要在机器人上示教以下 5 个点，填入 launch 参数：
+
+| # | 示教点 | 操作方法 | 记录内容 | 对应参数 |
+|---|--------|---------|---------|---------|
+| ① | **桌面高度** | 左臂 TCP 碰桌面 | tcp_pose.z 值 | `desk_height` |
+| ② | **左臂观测位** | 左臂拖到能看清台面的位置 | TCP [x,y,z,rx,ry,rz] | `observe_pose` |
+| ③ | **左臂拧盖握瓶** | 左臂末端握住桌上直立的水瓶 | 6个关节角 [j1~j6] | `cap_open_joints_l` |
+| ④ | **右臂拧盖握盖** | 右臂从上往下抓住瓶盖 | 6个关节角 [j1~j6] | `cap_open_joints_r` |
+| ⑤ | **倒水倾斜角** | 手动倾斜瓶子到水能流出 | J6 增量角度 | `pour_j6_angle` |
+
+### 示教方法
+
+在实机上手动拖动机器人到目标位置，从终端读取关节角 / TCP：
+
+```bash
+# 查看左臂当前关节角
+ros2 topic echo /L/robot_state --field joint_position --once
+
+# 查看左臂当前 TCP
+ros2 topic echo /L/robot_state --field tcp_pose --once
+
+# 查看右臂当前关节角
+ros2 topic echo /R/robot_state --field joint_position --once
+```
+
+### 示教后参数配置示例
+
+将示教得到的数据填入 `task1_pour_service.launch.py`：
+
+```python
+parameters=[{
+    'desk_height': 360.0,           # ① 桌面高度
+    'observe_pose': [99.917, -144.210, 542.554, -125.357, 0.0, -100.476],  # ② 观测位
+    'cap_open_joints_l': [-55.0, -90.0, -120.0, 30.0, 81.272, 0.0],  # ③ 左握瓶
+    'cap_open_joints_r': [45.434, -124.551, 128.388, -184.270, 19.218, 0.0],  # ④ 右握盖
+    'pour_j6_angle': 60.0,           # ⑤ 倒水角度
+}]
+```
+
+## 启动方式
+
+### 1. 模拟测试 (无硬件)
+
+一键启动全套模拟 (mock 左右臂 + 虚拟视觉 + TF + 倒水服务):
+
+```bash
+ros2 launch my_arm_control task1_pour_service.launch.py
+```
+
+启动的节点:
+| 节点 | 数量 | 说明 |
+|------|------|------|
+| mock_robo_ctrl_node | 2 | 模拟 L/R 臂，发布假 robot_state |
+| virtual_vision_task1 | 1 | 5Hz 发布 4 个物体的虚拟坐标 |
+| static_transform_publisher | 1 | camera_depth_frame → base_link |
+| task1_pour_service | 1 | 倒水服务状态机 (延迟 3s 启动) |
+
+### 2. 实机测试
+
+#### 前置启动 (同原实机流程)
+
+```bash
+# 终端 1: 摄像头驱动
+ros2 launch orbbec_camera gemini_330_series.launch.py
+
+# 终端 2: 左臂驱动 + 视觉管线
+ros2 launch robo_ctrl robo_ctrl_L.launch.py
+
+# 终端 3: 右臂驱动
+ros2 launch robo_ctrl robo_ctrl_R.launch.py
+
+# 终端 4: 夹爪节点 (左右各一个)
+ros2 run epg50_gripper_ros epg50_gripper_node --ros-args \
+  -p port:=/dev/ttyUSB0 -p default_slave_id:=9 \
+  -r __node:=gripper_node_L
+
+ros2 run epg50_gripper_ros epg50_gripper_node --ros-args \
+  -p port:=/dev/ttyUSB1 -p default_slave_id:=10 \
+  -p service_prefix:=R_ -r __node:=gripper_node_R
+```
+
+#### 启动倒水服务
+
+```bash
+# 终端 5: 启动倒水服务 (需先修改 launch 文件中的示教参数)
+ros2 launch my_arm_control task1_pour_service.launch.py
+```
+
+> **注意:** 实机运行时，launch 文件中的 `mock_robo_ctrl_L` 和 `mock_robo_ctrl_R` 需要替换为真实 robo_ctrl 节点 (或注释掉)，因为真实驱动已由 robo_ctrl_L/R.launch.py 提供。
+
+## 运动等待机制
+
+代码使用 `_wait_motion_done(side, timeout)` 替代固定 `sleep`：
+
+- 监听 `robot_state.motion_done` 信号
+- 运动完成立刻返回 (毫秒级响应)
+- 超时 5~15s 报错 (防止死等)
+- 支持左右臂独立等待
+
+夹爪操作 (开/合) 仍保留 0.3~0.5s 短延时，因为夹爪执行后需要机械动作完成。
+
+## 碰撞防护机制
+
+每次发运动前自动检查两臂碰撞风险：
+
+| 运动类型 | 检查方式 |
+|---------|---------|
+| `_move_cart` (绝对) | 检查目标 TCP 与静止臂 TCP 的距离 |
+| `_move_cart` (增量) | 当前 TCP + 增量 → 算出目标位置，再与静止臂 TCP 比对 |
+| `_act_incremental` | 同上 (增量 → 目标 → 比对) |
+| `_act_j` (关节) | 检查运动臂当前 TCP 与静止臂 TCP 的距离 |
+
+**触发条件：** 两臂 TCP 距离 < `collision_safety_distance` (默认 100mm)
+
+**触发行为：** 日志打印 `碰撞风险: L臂目标距R臂TCP仅 XX.Xmm (阈值 100.0mm) — 已阻止`，返回 `False`，任务进入 ERROR 状态。
+
+**局限性：**
+- TCP 距离 ≠ 手臂本体距离 (手臂比 TCP 粗，且姿态不同时本体位置不同)
+- 示教拧盖位时仍需用人眼确认两臂有足够间距 (建议 ≥ 200mm)
+
+## 视觉坐标变换流程
+
+```
+视觉节点发布 PoseStamped(frame_id=camera_depth_frame)
+    ↓
+task1_pour_service 收到后:
+    ├─ 如果 frame_id != base_link:
+    │   └─ tf_buffer.lookup_transform(base_link, camera_depth_frame)
+    │   └─ do_transform_pose_stamped(pose, transform)
+    │   └─ 得到 base_link 坐标系下的 x/y/z
+    └─ 存入 self._objects
+```
+
+相机外参标定完成后修改 launch 文件中的 `static_transform_publisher` 参数:
+
+```python
+camera_to_base = Node(
+    package='tf2_ros',
+    executable='static_transform_publisher',
+    name='static_tf_camera_to_base',
+    arguments=[
+        '--x', '标定结果x',      # ← 修改这里
+        '--y', '标定结果y',
+        '--z', '标定结果z',
+        '--roll', '标定结果roll',
+        '--pitch', '标定结果pitch',
+        '--yaw', '标定结果yaw',
+        '--frame-id', 'base_link',
+        '--child-frame-id', 'camera_depth_frame',
+    ],
+)
+```
+
+## 常见问题 (Task 1 专项)
+
+| 问题 | 原因 | 解决方法 |
+|------|------|---------|
+| `_wait_motion_done` 超时 | 实机 `motion_done` 一直为 False | 检查 robo_ctrl 节点是否正常 |
+| 夹爪服务超时 | 夹爪节点未启动或串口权限 | `sudo chmod 666 /dev/ttyUSB*` |
+| 视觉数据一直 0/4 | 视觉节点未启动或话题名不匹配 | `ros2 topic list \| grep /vision/` |
+| TF 变换失败 | camera_depth_frame 不存在 | `ros2 run tf2_ros tf2_echo base_link camera_depth_frame` |
+| 增量运动方向错误 | 视觉坐标在 camera_frame 未变换 | 检查 static_transform_publisher 参数 |
+
+---
+
+已完成的功能清单:
+
 - [x] RobotActJ 服务封装 (关节空间运动)
 - [x] 右臂 service client (/R/robot_move_cart, /R/robot_act_j)
 - [x] 圆弧运动 (RobotAct plan_type=1, circle_center + radian)
@@ -261,9 +522,24 @@ ros2 launch my_arm_control real_hardware.launch.py task_mode:=opencap
 - [x] 双臂协调状态机
 - [x] Kalman 滤波集成
 - [x] ServoMoveStart 伺服模式启动
+- [x] 碰撞防护机制
 - [ ] 接球任务流程
 
 ## 变更日志
+
+### 2026-05-24 — 碰撞检测与运动规划逻辑
+
+#### 新增: 碰撞防护机制
+
+- 新增 `_check_collision_risk(target_xyz, moving_side)` 方法
+- 在 `_move_cart`、`_act_incremental`、`_act_j` 中集成碰撞检查
+- 新增参数 `collision_safety_distance` (默认 100mm)
+- 三种运动类型的检查方式: 绝对笛卡尔检查目标位置、增量笛卡尔推算目标位置、关节运动检查当前 TCP 距离
+- 触发时打印具体距离并返回 False，阻止危险运动
+
+#### 其他修改
+
+- 更新 README.md: 添加碰撞防护、运动规划逻辑章节
 
 ### 2026-05-05 (实机调试完整记录)
 
