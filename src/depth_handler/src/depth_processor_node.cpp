@@ -103,13 +103,11 @@ void depth_handler::depth_node::callback(
             continue;
         }
 
-        // 计算深度图像的方向
-        // AI-Deep修改: 先获取聚类后的点云，加入诊断日志来定位被丢弃的目标
+        // AI-Deep修改: 先获取聚类后的点云
         auto roi_points = depthToPoints(depth_img, pixel_directions_, roi, 0.001f);
-        RCLCPP_INFO(this->get_logger(), "bbox[%d] class_id=%d: roi=(%d,%d,%d,%d) depth_points=%zu",
-                    i, bbox2d.class_id, roi.x, roi.y, roi.width, roi.height, roi_points.size());
+        // AI-Deep修改: 保留丢弃时的WARN日志
         if (roi_points.empty()) {
-            RCLCPP_WARN(this->get_logger(), "bbox[%d] class_id=%d depthToPoints empty (cluster < 3000?), DROPPED",
+            RCLCPP_WARN(this->get_logger(), "bbox[%d] class_id=%d depthToPoints empty (cluster < 500?), DROPPED",
                         i, bbox2d.class_id);
             continue;
         }
@@ -430,25 +428,26 @@ std::vector<Eigen::Vector3f> depth_handler::depth_node::depthToPoints(
             unclassed_points.emplace_back(dir * depth);
         }
     }
+    // AI-Deep修改: 降采样率从÷5降为÷2，min_cluster从3000降为500，避免小物体被误丢弃
     // downsample
     auto start = std::chrono::high_resolution_clock::now();
     if (unclassed_points.size() > 5000) {
         std::vector<Eigen::Vector3f> downsampled_points;
         downsampled_points.reserve(5000);
-        for (size_t i = 0; i < unclassed_points.size(); i += 5) {
+        for (size_t i = 0; i < unclassed_points.size(); i += 2) {
             downsampled_points.emplace_back(unclassed_points[i]);
         }
         unclassed_points = downsampled_points;
     }
     // classify the points
     // auto result                           = clusterPointsKDTree(unclassed_points, 0.01f, 3000, 100000);
-    auto result                           = voxelClustering(unclassed_points, 0.01f, 3000);
+    auto result                           = voxelClustering(unclassed_points, 0.01f, 500);
     auto end                              = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end - start;
     auto end2                             = std::chrono::high_resolution_clock::now();
     // return largest cluster
     for (const auto& cluster: result) {
-        if (cluster.size() < 3000 || cluster.size() > 100000)
+        if (cluster.size() < 500 || cluster.size() > 100000)
             continue;
         for (auto& point: cluster) {
             points.emplace_back(point);
