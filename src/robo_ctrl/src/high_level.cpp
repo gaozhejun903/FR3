@@ -78,9 +78,9 @@ void plan_and_execute_node::handle_robot_act(
         // use mutex to safely access the robot state
         std::lock_guard<std::mutex> lock(robot_mutex_);
         robo_ctrl::msg::TCPPose tcp_pose = robot_state_msg_->tcp_pose;
-        current_pose.position.x          = tcp_pose.x; // 毫米转米
-        current_pose.position.y          = tcp_pose.y;
-        current_pose.position.z          = tcp_pose.z;
+        current_pose.position.x          = tcp_pose.x / 1000.0; // 毫米转米
+        current_pose.position.y          = tcp_pose.y / 1000.0;
+        current_pose.position.z          = tcp_pose.z / 1000.0;
         tf2::Quaternion q;
         q.setRPY(
             tcp_pose.rx * M_PI / 180.0, // 度转弧度
@@ -101,10 +101,10 @@ void plan_and_execute_node::handle_robot_act(
 
     // 将TCPPose转换为geometry_msgs::Pose
     geometry_msgs::msg::Pose target_pose;
-    target_pose.position.x = request->tcp_pose.x; // 毫米转米
-    target_pose.position.y = request->tcp_pose.y;
-    target_pose.position.z = request->tcp_pose.z;
-
+    target_pose.position.x = request->tcp_pose.x / 1000.0; // 毫米转米
+    target_pose.position.y = request->tcp_pose.y / 1000.0;
+    target_pose.position.z = request->tcp_pose.z / 1000.0;
+    
     double roll  = request->tcp_pose.rx * M_PI / 180.0; // 度转弧度
     double pitch = request->tcp_pose.ry * M_PI / 180.0;
     double yaw   = request->tcp_pose.rz * M_PI / 180.0;
@@ -157,8 +157,16 @@ void plan_and_execute_node::handle_robot_act(
         std::vector<geometry_msgs::msg::Pose> path_points = trajectory;
         RCLCPP_INFO(this->get_logger(), "增量运动模式");
         for (size_t i = 0; i < trajectory.size(); ++i) {
-            if (i == 0)
+            if (i == 0) {
+                trajectory[0].position.x = 0;
+                trajectory[0].position.y = 0;
+                trajectory[0].position.z = 0;
+                trajectory[0].orientation.x = 0;
+                trajectory[0].orientation.y = 0;
+                trajectory[0].orientation.z = 0;
+                trajectory[0].orientation.w = 1.0;
                 continue;
+            }
             trajectory[i].position.x -= path_points[i - 1].position.x;
             trajectory[i].position.y -= path_points[i - 1].position.y;
             trajectory[i].position.z -= path_points[i - 1].position.z;
@@ -196,15 +204,7 @@ void plan_and_execute_node::handle_robot_act(
                 trajectory[i].orientation.w
             );
         }
-        if (request->plan_type) {
-            trajectory[0].position.x    = 0;
-            trajectory[0].position.y    = 0;
-            trajectory[0].position.z    = 0;
-            trajectory[0].orientation.x = 0;
-            trajectory[0].orientation.y = 0;
-            trajectory[0].orientation.z = 0;
-            trajectory[0].orientation.w = 1.0; // 保持初始姿
-        }
+        
     } else {
         RCLCPP_INFO(this->get_logger(), "绝对运动模式");
     }
@@ -509,7 +509,7 @@ void planner::set_target_pose(const geometry_msgs::msg::Pose& target_pose) {
     target_pose_ = target_pose;
 }
 
-void planner::plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<robo_ctrl::msg::TCPPose> waypoints) {
+void planner::plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<robo_ctrl::msg::TCPPose>& waypoints) {
     // 清空现有轨迹
     trajectory_.clear();
 
@@ -539,7 +539,7 @@ void planner::plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<robo_ctr
     }
 }
 
-void planner::plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<geometry_msgs::msg::Pose> waypoints) {
+void planner::plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<geometry_msgs::msg::Pose>& waypoints) {
     // 清空现有轨迹
     trajectory_.clear();
 

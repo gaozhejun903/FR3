@@ -149,8 +149,8 @@ public:
     planner();
     ~planner();
     enum PLAN_TYPE { LINEAR = 0, CIRCULAR };
-    void plan_trajectory(planner::PLAN_TYPE plan_type, const std::vector<robo_ctrl::msg::TCPPose> waypoints);
-    void plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<geometry_msgs::msg::Pose> waypoints);
+    void plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<robo_ctrl::msg::TCPPose> & waypoints);
+    void plan_trajectory(planner::PLAN_TYPE plan_type, std::vector<geometry_msgs::msg::Pose> & waypoints);
     void set_start_pose(const geometry_msgs::msg::Pose& start_pose);
     void set_target_pose(const geometry_msgs::msg::Pose& target_pose);
     void set_planning_count(int count) {
