@@ -105,6 +105,11 @@ void depth_handler::depth_node::callback(
 
         // AI-Deep修改: 先获取聚类后的点云
         auto roi_points = depthToPoints(depth_img, pixel_directions_, roi, 0.001f);
+        // AI-Deep修改: 标定结果中camera+Z→TCP+Z(应为-Z)，在相机帧翻转Z以修正深度方向
+        // 此修改只翻转Z轴，保持X/Y映射不变(已验证 camera+X→TCP-Y, camera+Y→TCP+X)
+        for (auto& p : roi_points) {
+            p.z() = -p.z();
+        }
         // AI-Deep修改: 保留丢弃时的WARN日志
         if (roi_points.empty()) {
             RCLCPP_WARN(this->get_logger(), "bbox[%d] class_id=%d depthToPoints empty (cluster < 500?), DROPPED",
@@ -131,6 +136,14 @@ void depth_handler::depth_node::callback(
 
         // 将点云从相机坐标系转换到robotbase坐标系
         bool transform_success = transformPointCloud(transformed_cluster, target_frame_, source_frame_, this->now());
+
+        // DEBUG: 打印变换前后第一个点用于诊断坐标偏差
+        if (!cluster.empty() && !transformed_cluster.empty()) {
+            RCLCPP_INFO(this->get_logger(), "TF变换: success=%d, 变换前[0]=(%.3f,%.3f,%.3f) 变换后[0]=(%.3f,%.3f,%.3f)",
+                transform_success,
+                cluster[0].x(), cluster[0].y(), cluster[0].z(),
+                transformed_cluster[0].x(), transformed_cluster[0].y(), transformed_cluster[0].z());
+        }
 
         if (!transform_success) {
             RCLCPP_WARN(this->get_logger(), "点云坐标变换失败，使用原始点云");

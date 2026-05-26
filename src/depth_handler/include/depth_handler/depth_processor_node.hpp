@@ -91,7 +91,7 @@ private:
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::string target_frame_ = "Lrobot_base";         // 目标坐标系
-    std::string source_frame_ = "camera_depth_frame"; // 相机坐标系
+    std::string source_frame_ = "camera_depth_optical_frame"; // 相机坐标系(depthToPoints输出在optical frame)
 
     // 主题配置
     std::string camera_info_topic_         = "/camera/depth/camera_info";

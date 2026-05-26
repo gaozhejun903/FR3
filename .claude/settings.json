@@ -9,10 +9,24 @@
       "Read(//opt/ros/**)",
       "Bash(ros2 topic *)",
       "Bash(python3)",
-      "Bash(rg -rn \"gripper\" /home/mihu/FR3_again/src/ -g '!build' -g '!install' -g '!log' -g '!__pycache__')"
+      "Bash(rg -rn \"gripper\" /home/mihu/FR3_again/src/ -g '!build' -g '!install' -g '!log' -g '!__pycache__')",
+      "Bash(rm -f /tmp/bbox3d_10.txt)",
+      "Bash(echo '===== 消息 #__TRACKED_VAR__ =====')",
+      "Bash(timeout 4 ros2 topic echo --once /depth_handler/bbox3d)",
+      "Bash(echo \"---\")",
+      "Bash(kill 59921)",
+      "Bash(pkill -9 -f depth_processor_node)",
+      "Bash(ros2 run *)",
+      "Bash(timeout 60 ros2 service call /L/robot_move_cart robo_ctrl/srv/RobotMoveCart '{ *)",
+      "Bash(grep -rnl \"depth_handler\" /home/mihu/FR3_ago --include=\"*\" 2>/dev/null; grep -rnl \"depth_handler\" /home/mihu/FR3_again --include=\"*\" 2>/dev/null | sort)",
+      "Read(//home/mihu/**)",
+      "Bash(cp /home/mihu/FR3_again/src/tools/config/static_transforms.yaml /home/mihu/FR3_again/install/tools/share/tools/config/static_transforms.yaml)",
+      "Bash(kill %1)",
+      "Bash(wait)"
     ],
     "additionalDirectories": [
-      "/tmp"
+      "/tmp",
+      "/home/mihu/FR3_again/src/tools/config"
     ]
   }
 }
