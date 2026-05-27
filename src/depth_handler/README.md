@@ -60,7 +60,82 @@ source install/setup.bash
 # 直接运行节点
 ros2 run depth_handler depth_processor_node
 
-# 使用 launch（若已编写 launch 脚本）
+# 使用 launch（整合相机、TF发布、检测器、深度处理）
 ros2 launch depth_handler depth_processor.launch.py
+
+# 轻量 launch（仅 TF 发布 + 深度处理）
+ros2 launch depth_handler depth_tf.launch.py
 ```
+
+## 坐标系与 TF 链路
+
+### 核心链路
+
+```
+depthToPoints 输出          TF lookupTransform              最终输出
+camera_depth_optical_frame ──→  ...  ──→  Lrobot_base      /depth_handler/bbox3d
+       ↑                                                    frame_id: Lrobot_base
+  光学坐标系                                           左臂基座坐标系
+ (X右 Y下 Z前)
+```
+
+### source_frame_ 的选择
+
+`sourcerce_frame_` 设为 `camera_link`，而非 `camera_depth_optical_frame`。
+
+**原因**：手眼标定 `Ltcp → camera_link` 的结果本身是 OpenCV 光学约定（`solvePnP` 输出），与 `depthToPoints` 输出的光学坐标系一致。若使用 `camera_depth_optical_frame`，TF 链路会经过 URDF 中 `camera_depth_frame → camera_depth_optical_frame` 的 `rpy="-π/2, 0, -π/2"` 旋转，导致**光学坐标被重复旋转一次**。
+
+### 完整 TF 树
+
+```
+Lrobot_base ← Ltcp ← camera_link ← camera_depth_frame ← camera_depth_optical_frame
+  (robot     (手眼    (标定锚点,              ↑                ↑
+  driver)    标定)   与depthToPoints    相机URDF        相机URDF
+                     光学约定一致)    (identity)    (rpy=-π/2,0,-π/2)
+```
+
+### 关键约定
+
+| 坐标系 | 用途 | 约定 |
+|--------|------|------|
+| `camera_depth_optical_frame` | 深度图 frame_id, depthToPoints 输出 | X右 Y下 Z前(深度) |
+| `camera_depth_frame` | 纯 TF 中间节点 | X前 Y左 Z上 (机体) |
+| `camera_link` | 标定锚点, source_frame_ | 同光学约定(标定结果) |
+| `Ltcp` | 法兰盘 | 机器人坐标系 |
+| `Lrobot_base` | 左臂基座, 最终输出 | 机器人坐标系 |
+
+## 常见问题
+
+### bbox3d 坐标偏差大
+
+1. 确认机器人控制器在跑（`Lrobot_base` 存在于 TF 树）
+2. 确认 `static_transforms.yaml` 已同步到 `install/` 目录
+3. 确认 `source_frame_` = `camera_link`（不是 `camera_depth_optical_frame`）
+4. 确认代码中**没有** `p.z() = -p.z()` 这类硬编码点云翻转
+
+### 验证 TF 链路
+
+```bash
+# 查看 camera_link 在 Lrobot_base 下的位姿
+ros2 run tf2_ros tf2_echo Lrobot_base camera_link
+
+# 查看完整 TF 树
+ros2 run tf2_ros tf2_monitor
+```
+
+## 手眼标定数据流
+
+```
+标定脚本(eye_in_hand_calibration.py)
+  ↓ solvePnP (OpenCV光学约定)
+camera_to_ltcp (camera_color_optical_frame → Ltcp)
+  ↓ 取逆
+ltcp_to_camera (Ltcp → camera_link)
+  ↓ 写入 static_transforms.yaml
+TF 发布节点(static_transforms_publisher.py)
+  ↓ sendTransform
+深度节点 lookupTransform 可查
+```
+
+> **注意**：标定使用彩色相机 (`camera_color_optical_frame`)，深度处理使用深度相机 (`camera_depth_optical_frame`)。两者之间有 ~1.4cm 的物理偏移（由相机出厂外参给出），对抓取精度影响可忽略。严格场景下可改为从 TF 动态读取 color→depth 外参。
 

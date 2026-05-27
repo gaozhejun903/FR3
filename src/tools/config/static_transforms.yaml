@@ -76,21 +76,32 @@ transforms:
   #     pitch: 0.0
   #     yaw: 0.0
 
-  # AI-kimi: ========== 新增标定结果 ==========
-  # AI-kimi: 数据来源: calibration_data/combined_calibration.json -> hand_eye_calibration -> ltcp_to_camera
-  # AI-kimi: 描述: 左臂TCP (Ltcp) 到相机 (camera_link) 的手眼标定变换
+  # AI-kimi: ========== 第一次手眼标定结果 (2026-05-20)，已停用 ==========
+  # # 来源: calibration_data/combined_calibration.json -> ltcp_to_camera
+  # # camera→flange: [0.0893, 0.0104, 0.0794] | yaw≈-90°
+  # - frames:
+  #     parent: Ltcp
+  #     child: camera_link
+  #   translation:
+  #     x: 0.011550205535439057
+  #     y: -0.08829998528743548
+  #     z: -0.08037542431989243
+  #   rotation:
+  #     roll: -0.8156816220768173
+  #     pitch: -0.7108002290829644
+  #     yaw: 89.99182846092766
+
+  # AI-Deep修改: 第二次手眼标定结果 (2026-05-27), 22/22组有效, TSAI方法, ArUco 0.1m
+  # camera→flange: [0.0872, 0.0103, 0.0766]m | yaw≈-90.7°
+  # 此处发布 Ltcp→camera_link (即 flange→camera 逆变换)
   - frames:
       parent: Ltcp
       child: camera_link
-    # AI-kimi: 位置参数 (单位: 米)
     translation:
-      x: 0.011550205535439057
-      y: -0.08829998528743548
-      z: -0.08037542431989243
-    # AI-Deep修改: yaw取反(90°→-90°)配合代码Z取反，保持camera+Y→TCP+X不变
-    # camera+X→TCP-Y ✓, camera+Y→TCP+X ✓, camera+Z→TCP-Z ✓(代码取反)
-    # 旋转参数 (单位: 度，使用RPY欧拉角 XYZ顺序)
+      x: 0.011508
+      y: -0.085901
+      z: -0.077855
     rotation:
-      roll: -0.8156816220768173
-      pitch: -0.7108002290829644
-      yaw: -89.99182846092766
+      roll: -0.109
+      pitch: -0.859
+      yaw: 90.740
