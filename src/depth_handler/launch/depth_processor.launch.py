@@ -1,4 +1,5 @@
-# AI-Deep修改: 整合相机、机械臂控制、目标检测、静态TF、深度处理为一体化的launch文件
+# AI-Deep: 一体化launch文件
+# 包含：左臂+右臂控制、左右夹爪、相机、目标检测、静态TF、深度处理
 
 import os
 import subprocess
@@ -12,22 +13,42 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # 设备权限设置
+    # AI-Deep: 夹爪设备权限
     password = '123'
-    subprocess.run(
-        ['sudo', '-S', 'chmod', '777', '/dev/ttyACM0'],
-        input=password + '\n', encoding='utf-8'
+    for dev in ['/dev/ttyACM0', '/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyUSB2']:
+        if os.path.exists(dev):
+            subprocess.run(
+                ['sudo', '-S', 'chmod', '777', dev],
+                input=password + '\n', encoding='utf-8',
+                capture_output=True
+            )
+
+    # ═══════════════════════════════════════════════════════════════
+    # 左臂参数 (192.168.58.2)
+    # ═══════════════════════════════════════════════════════════════
+    L_ip_arg = DeclareLaunchArgument(
+        'L_robot_ip', default_value='192.168.58.2',
+        description='左臂控制器IP地址'
+    )
+    # ═══════════════════════════════════════════════════════════════
+    # 右臂参数 (192.168.58.3)
+    # ═══════════════════════════════════════════════════════════════
+    R_ip_arg = DeclareLaunchArgument(
+        'R_robot_ip', default_value='192.168.58.3',
+        description='右臂控制器IP地址'
+    )
+    # ═══════════════════════════════════════════════════════════════
+    # 夹爪端口参数
+    # ═══════════════════════════════════════════════════════════════
+    R_gripper_port_arg = DeclareLaunchArgument(
+        'R_gripper_port', default_value='/dev/ttyUSB0',
+        description='右夹爪串口'
+    )
+    L_gripper_port_arg = DeclareLaunchArgument(
+        'L_gripper_port', default_value='/dev/ttyUSB2',
+        description='左夹爪串口'
     )
 
-    # AI-Deep修改: 声明所有可配置的启动参数
-    robot_ip_arg = DeclareLaunchArgument(
-        'robot_ip', default_value='192.168.58.2',
-        description='机器人控制器IP地址'
-    )
-    robot_name_arg = DeclareLaunchArgument(
-        'robot_name', default_value='L',
-        description='机器人名称 (L/R)'
-    )
     confidence_threshold_arg = DeclareLaunchArgument(
         'confidence_threshold', default_value='0.5',
         description='目标检测置信度阈值'
@@ -38,7 +59,9 @@ def generate_launch_description():
         description='YOLO模型路径'
     )
 
-    # AI-Deep修改: 通过IncludeLaunchDescription引入Orbbec相机启动文件
+    # ═══════════════════════════════════════════════════════════════
+    # 相机 + 静态TF
+    # ═══════════════════════════════════════════════════════════════
     orbbec_launch_dir = get_package_share_directory('orbbec_camera')
     camera_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -46,7 +69,6 @@ def generate_launch_description():
         )
     )
 
-    # AI-Deep修改: 通过IncludeLaunchDescription引入静态TF发布启动文件
     tools_launch_dir = get_package_share_directory('tools')
     static_tf_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -54,19 +76,83 @@ def generate_launch_description():
         )
     )
 
-    # AI-Deep修改: 机械臂控制节点，robot_ip和robot_name可通过launch参数配置
-    robo_ctrl_node = Node(
+    # ═══════════════════════════════════════════════════════════════
+    # 左臂 (L) 控制节点
+    # ═══════════════════════════════════════════════════════════════
+    L_robo_ctrl_node = Node(
         package='robo_ctrl',
         executable='robo_ctrl_node',
-        name=[LaunchConfiguration('robot_name'), 'robo_ctrl'],
+        name='Lrobo_ctrl',
         parameters=[{
-            'robot_ip': LaunchConfiguration('robot_ip'),
-            'robot_name': LaunchConfiguration('robot_name'),
+            'robot_ip': LaunchConfiguration('L_robot_ip'),
+            'robot_name': 'L',
+        }],
+        output='screen',
+    )
+    L_high_level_node = Node(
+        package='robo_ctrl',
+        executable='high_level_node',
+        name='Lhigh_level',
+        parameters=[{
+            'robot_ip': LaunchConfiguration('L_robot_ip'),
+            'robot_name': 'L',
         }],
         output='screen',
     )
 
-    # AI-Deep修改: 目标检测节点，支持confidence_threshold和model_path可配置
+    # ═══════════════════════════════════════════════════════════════
+    # 右臂 (R) 控制节点
+    # ═══════════════════════════════════════════════════════════════
+    R_robo_ctrl_node = Node(
+        package='robo_ctrl',
+        executable='robo_ctrl_node',
+        name='Rrobo_ctrl',
+        parameters=[{
+            'robot_ip': LaunchConfiguration('R_robot_ip'),
+            'robot_name': 'R',
+        }],
+        output='screen',
+    )
+    R_high_level_node = Node(
+        package='robo_ctrl',
+        executable='high_level_node',
+        name='Rhigh_level',
+        parameters=[{
+            'robot_ip': LaunchConfiguration('R_robot_ip'),
+            'robot_name': 'R',
+        }],
+        output='screen',
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # 左夹爪节点
+    # ═══════════════════════════════════════════════════════════════
+    L_gripper_node = Node(
+        package='epg50_gripper_ros',
+        executable='epg50_gripper_node',
+        name='L_gripper_node',
+        parameters=[{
+            'port': LaunchConfiguration('L_gripper_port'),
+        }],
+        output='screen',
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # 右夹爪节点
+    # ═══════════════════════════════════════════════════════════════
+    R_gripper_node = Node(
+        package='epg50_gripper_ros',
+        executable='epg50_gripper_node',
+        name='R_gripper_node',
+        parameters=[{
+            'port': LaunchConfiguration('R_gripper_port'),
+        }],
+        output='screen',
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # 视觉节点
+    # ═══════════════════════════════════════════════════════════════
     detector_node = Node(
         package='detector',
         executable='detector_node_exe',
@@ -78,7 +164,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    # AI-Deep修改: 深度处理节点
     depth_node = Node(
         package='depth_handler',
         executable='depth_processor_node',
@@ -86,15 +171,21 @@ def generate_launch_description():
         output='screen',
     )
 
-    # AI-Deep修改: 返回完整的LaunchDescription，包含所有节点和参数声明
     return LaunchDescription([
-        robot_ip_arg,
-        robot_name_arg,
+        L_ip_arg,
+        R_ip_arg,
+        L_gripper_port_arg,
+        R_gripper_port_arg,
         confidence_threshold_arg,
         model_path_arg,
         camera_launch,
         static_tf_launch,
-        robo_ctrl_node,
+        L_robo_ctrl_node,
+        L_high_level_node,
+        R_robo_ctrl_node,
+        R_high_level_node,
+        L_gripper_node,
+        R_gripper_node,
         detector_node,
         depth_node,
     ])

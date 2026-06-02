@@ -197,3 +197,48 @@ private:
 // 快速创建服务器
 #define CREATE_SERVICE_SERVER(ServiceType, node_name, service_name, callback) \
     std::make_shared<ServiceServerTemplate<ServiceType>>(node_name, service_name, callback)
+
+// AI-Deep: ServiceCaller模板，从main.cpp移到头文件供task1.cpp等复用
+template<typename ServiceType>
+class ServiceCaller {
+public:
+    using Request  = typename ServiceType::Request;
+    using Response = typename ServiceType::Response;
+    using Client   = rclcpp::Client<ServiceType>;
+
+    static std::shared_ptr<Response> callServiceSync(
+        std::shared_ptr<Client> client,
+        std::shared_ptr<Request> request,
+        rclcpp::Node::SharedPtr node,
+        std::chrono::seconds timeout    = std::chrono::seconds(5),
+        const std::string& service_name = "unknown"
+    ) {
+        if (!client) {
+            auto response     = std::make_shared<Response>();
+            response->success = false;
+            response->message = "Client is null for service: " + service_name;
+            RCLCPP_ERROR(node->get_logger(), "Client is null for service: %s", service_name.c_str());
+            return response;
+        }
+
+        auto future = client->async_send_request(request);
+
+        if (rclcpp::spin_until_future_complete(node, future, timeout) == rclcpp::FutureReturnCode::SUCCESS) {
+            auto response = future.get();
+            if (response->success) {
+                RCLCPP_INFO(node->get_logger(), "Service '%s' succeeded: %s",
+                            service_name.c_str(), response->message.c_str());
+            } else {
+                RCLCPP_ERROR(node->get_logger(), "Service '%s' failed: %s",
+                             service_name.c_str(), response->message.c_str());
+            }
+            return response;
+        } else {
+            auto response     = std::make_shared<Response>();
+            response->success = false;
+            response->message = "Service call timeout for: " + service_name;
+            RCLCPP_ERROR(node->get_logger(), "Service call timeout for: %s", service_name.c_str());
+            return response;
+        }
+    }
+};

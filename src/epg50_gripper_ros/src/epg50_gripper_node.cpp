@@ -41,24 +41,25 @@ public:
             gripper_->debug = debug;
 
             // 创建服务
+            // AI-Deep: 改用相对命名，避免多节点服务名冲突
             command_service_ = this->create_service<epg50_gripper_ros::srv::GripperCommand>(
-                "epg50_gripper/command",
+                "~/command",
                 std::bind(&EPG50GripperNode::handle_command, this, std::placeholders::_1, std::placeholders::_2)
             );
 
             status_service_ = this->create_service<epg50_gripper_ros::srv::GripperStatus>(
-                "epg50_gripper/status",
+                "~/status",
                 std::bind(&EPG50GripperNode::handle_status, this, std::placeholders::_1, std::placeholders::_2)
             );
 
             rename_service_ = this->create_service<epg50_gripper_ros::srv::RenameGripper>(
-                "epg50_gripper/rename",
+                "~/rename",
                 std::bind(&EPG50GripperNode::handle_rename, this, std::placeholders::_1, std::placeholders::_2)
             );
 
             // 创建状态发布器
             status_publisher_ =
-                this->create_publisher<epg50_gripper_ros::msg::GripperStatus>("epg50_gripper/status_stream", 10);
+                this->create_publisher<epg50_gripper_ros::msg::GripperStatus>("~/status_stream", 10);
 
             // 启动状态更新线程
             status_thread_ = std::thread(&EPG50GripperNode::status_update_thread, this);

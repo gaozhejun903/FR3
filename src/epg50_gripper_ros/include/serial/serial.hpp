@@ -11,6 +11,9 @@
 #include <chrono>
 #include <thread>
 #include <mutex> // 添加互斥锁头文件
+// AI-Deep: RS485 mode configuration
+#include <sys/ioctl.h>
+#include <linux/serial.h>
 
 class EPG50_Serial {
 private:
@@ -36,6 +39,20 @@ private:
         return crc;
     }
 
+    // AI-Deep: 手动RTS控制RS485收发方向（RTS低=发送，RTS高=接收）
+    void rs485_tx_enable() {
+        int flags;
+        ioctl(serial_port, TIOCMGET, &flags);
+        flags &= ~TIOCM_RTS;  // RTS低→发送模式
+        ioctl(serial_port, TIOCMSET, &flags);
+    }
+    void rs485_rx_enable() {
+        int flags;
+        ioctl(serial_port, TIOCMGET, &flags);
+        flags |= TIOCM_RTS;   // RTS高→接收模式
+        ioctl(serial_port, TIOCMSET, &flags);
+    }
+
     // 发送Modbus命令并接收响应
     bool send_command(const std::vector<uint8_t>& command, std::vector<uint8_t>& response) {
         // 获取互斥锁，确保一次只有一个线程可以访问串口
@@ -54,11 +71,20 @@ private:
         // 先清空接收缓冲区中可能残留的数据
         tcflush(serial_port, TCIFLUSH);
 
+        // AI-Deep: 手动RTS控制RS485方向：拉高RTS→发送→等待完成→拉低RTS→接收
+        rs485_tx_enable();
+        usleep(1000);  // 等待1ms让收发器稳定
+
         if (write(serial_port, command.data(), command.size()) < 0) {
             if (debug)
                 std::cerr << "写入失败: " << strerror(errno) << std::endl;
+            rs485_rx_enable();
             return false;
         }
+
+        // AI-Deep: 等待数据完全发送后再切换为接收
+        tcdrain(serial_port);
+        rs485_rx_enable();
 
         // 等待响应（示例超时500ms）
         auto start = std::chrono::steady_clock::now();
@@ -166,6 +192,19 @@ public:
         if (tcsetattr(serial_port, TCSANOW, &tty) != 0) {
             close(serial_port);
             throw std::runtime_error("Error setting termios attributes");
+        }
+
+        // AI-Deep: 配置RS485模式 (PL2303需要RTS_ON_SEND控制收发切换)
+        struct serial_rs485 rs485conf;
+        memset(&rs485conf, 0, sizeof(rs485conf));
+        rs485conf.flags = SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND;
+        rs485conf.delay_rts_before_send = 0;
+        rs485conf.delay_rts_after_send  = 0;
+        if (ioctl(serial_port, TIOCSRS485, &rs485conf) < 0) {
+            // AI-Deep: 某些驱动/chip不支持RS485配置，非致命错误
+            if (debug) {
+                std::cerr << "AI-Deep: 警告: 无法配置RS485模式: " << strerror(errno) << std::endl;
+            }
         }
     }
 

@@ -23,7 +23,9 @@
       "Bash(cp /home/mihu/FR3_again/src/tools/config/static_transforms.yaml /home/mihu/FR3_again/install/tools/share/tools/config/static_transforms.yaml)",
       "Bash(kill %1)",
       "Bash(wait)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(colcon build *)",
+      "Bash(ros2 node *)"
     ],
     "additionalDirectories": [
       "/tmp",

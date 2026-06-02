@@ -144,6 +144,8 @@ public:
     rclcpp::Client<robo_ctrl::srv::RobotServo>::SharedPtr L_robot_servo_client_;
     rclcpp::Client<robo_ctrl::srv::RobotSetSpeed>::SharedPtr L_robot_set_speed_client_;
     rclcpp::Client<epg50_gripper_ros::srv::GripperCommand>::SharedPtr gripper_command_client_;
+    // AI-Deep: 右爪独立客户端，连接 R_gripper_node 的 ~/command 服务
+    rclcpp::Client<epg50_gripper_ros::srv::GripperCommand>::SharedPtr R_gripper_command_client_;
 
     // publishers
     rclcpp::Publisher<robo_ctrl::msg::TCPPose>::SharedPtr L_tcp_pose_pub_;

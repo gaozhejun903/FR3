@@ -83,7 +83,27 @@ ament_target_dependencies(robot_main_refactored
   depth_handler
 )
 
-install(TARGETS dualarm_node robot_main kalman_example robot_main_refactored
+# AI-Deep: 创建 task1 开瓶盖+倒水 可执行文件
+# 链接main.cpp但跳过其main()函数（通过BUILD_AS_LIB宏）
+add_executable(task1
+                src/task1.cpp
+                src/main.cpp
+                src/kalman.cpp)
+target_compile_definitions(task1 PRIVATE BUILD_AS_LIB)
+ament_target_dependencies(task1
+  rclcpp
+  rclcpp_action
+  epg50_gripper_ros
+  robo_ctrl
+  geometry_msgs
+  tf2_ros
+  tf2
+  tf2_geometry_msgs
+  visualization_msgs
+  depth_handler
+)
+
+install(TARGETS dualarm_node robot_main kalman_example robot_main_refactored task1
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY

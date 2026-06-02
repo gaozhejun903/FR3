@@ -102,7 +102,8 @@ RobotMain::RobotMain(const rclcpp::NodeOptions& options): Node("robot_main", opt
     L_robot_servo_client_      = this->create_client<robo_ctrl::srv::RobotServo>(ROBOT_L + "/robot_servo");
     L_robot_set_speed_client_  = this->create_client<robo_ctrl::srv::RobotSetSpeed>(ROBOT_L + "/robot_set_speed");
     L_robot_act_j_client_      = this->create_client<robo_ctrl::srv::RobotActJ>(ROBOT_L + "/robot_act_j");
-    gripper_command_client_    = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/epg50_gripper/command");
+    // AI-Deep: 左爪客户端 → L_gripper_node 的 ~/command
+    gripper_command_client_    = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/L_gripper_node/command");
 
     R_robot_servo_line_client_ = this->create_client<robo_ctrl::srv::RobotServoLine>(ROBOT_R + "/robot_servo_line");
     R_robot_act_client_        = this->create_client<robo_ctrl::srv::RobotAct>(ROBOT_R + "/robot_act");
@@ -111,7 +112,8 @@ RobotMain::RobotMain(const rclcpp::NodeOptions& options): Node("robot_main", opt
     R_robot_servo_client_      = this->create_client<robo_ctrl::srv::RobotServo>(ROBOT_R + "/robot_servo");
     R_robot_set_speed_client_  = this->create_client<robo_ctrl::srv::RobotSetSpeed>(ROBOT_R + "/robot_set_speed");
     R_robot_act_j_client_      = this->create_client<robo_ctrl::srv::RobotActJ>(ROBOT_R + "/robot_act_j");
-    gripper_command_client_    = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/epg50_gripper/command");
+    // AI-Deep: 右爪客户端 → R_gripper_node 的 ~/command
+    R_gripper_command_client_  = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/R_gripper_node/command");
 
     this->declare_parameter("init_tcp_pose", std::vector<double> { 168.0, -102.0, 394.0, -111.556, 0.0, -90.0 });
     this->declare_parameter("open_cap_joint_pose", std::vector<double> { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 });
@@ -308,57 +310,7 @@ void RobotMain::handleObjDetection(const depth_handler::msg::Bbox3dArray::Shared
     });
 }
 
-template<typename ServiceType>
-class ServiceCaller {
-public:
-    using Request  = typename ServiceType::Request;
-    using Response = typename ServiceType::Response;
-    using Client   = rclcpp::Client<ServiceType>;
-
-    static std::shared_ptr<Response> callServiceSync(
-        std::shared_ptr<Client> client,
-        std::shared_ptr<Request> request,
-        rclcpp::Node::SharedPtr node,
-        std::chrono::seconds timeout    = std::chrono::seconds(5),
-        const std::string& service_name = "unknown"
-    ) {
-        if (!client) {
-            auto response     = std::make_shared<Response>();
-            response->success = false;
-            response->message = "Client is null for service: " + service_name;
-            RCLCPP_ERROR(node->get_logger(), "Client is null for service: %s", service_name.c_str());
-            return response;
-        }
-
-        auto future = client->async_send_request(request);
-
-        if (rclcpp::spin_until_future_complete(node, future, timeout) == rclcpp::FutureReturnCode::SUCCESS) {
-            auto response = future.get();
-            if (response->success) {
-                RCLCPP_INFO(
-                    node->get_logger(),
-                    "Service '%s' succeeded: %s",
-                    service_name.c_str(),
-                    response->message.c_str()
-                );
-            } else {
-                RCLCPP_ERROR(
-                    node->get_logger(),
-                    "Service '%s' failed: %s",
-                    service_name.c_str(),
-                    response->message.c_str()
-                );
-            }
-            return response;
-        } else {
-            auto response     = std::make_shared<Response>();
-            response->success = false;
-            response->message = "Service call timeout for: " + service_name;
-            RCLCPP_ERROR(node->get_logger(), "Service call timeout for: %s", service_name.c_str());
-            return response;
-        }
-    }
-};
+// AI-Deep: ServiceCaller已移至service_server_template.hpp
 
 /**
  * @brief 机器人服务调用的便捷宏定义
@@ -397,6 +349,8 @@ bool waitForServiceEnhanced(
     return true;
 }
 
+// AI-Deep: BUILD_AS_LIB时跳过main()，避免与task1等独立程序冲突
+#ifndef BUILD_AS_LIB
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     rclcpp::NodeOptions options;
@@ -2448,6 +2402,7 @@ int main(int argc, char** argv) {
     rclcpp::shutdown();
     return 0;
 }
+#endif  // BUILD_AS_LIB
 
 void open_castbon() {
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Open castbon function called");

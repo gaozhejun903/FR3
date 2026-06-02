@@ -1,5 +1,122 @@
 # EPG50_Serial 夹爪串行通信库
 
+## AI-Deep: 双夹爪独立总线部署指南
+
+### 硬件拓扑
+
+```
+电脑 USB-HUB ─┬─ PL2303#1 (USB口3-1.1) ─ RS485 ─ 右爪 (ID=9)
+              ├─ PL2303#2 (USB口3-1.4) ─ RS485 ─ 左爪 (ID=9)
+              └─ 相机
+```
+
+两个夹爪使用**独立 RS-485 总线**，因此从站 ID 可以相同（均为 9），不冲突。
+
+### 找出哪个端口对应哪个爪子
+
+```bash
+# 查看当前 USB 串口设备
+ls /dev/ttyUSB*
+
+# 逐个裸测 Modbus 命令
+for p in /dev/ttyUSB*; do
+    python3 -c "
+import serial
+s = serial.Serial('$p', 115200, timeout=0.3)
+cmd = bytes([0x09, 0x03, 0x07, 0xD0, 0x00, 0x04, 0x45, 0xCC])
+s.write(cmd); s.flush(); r = s.read(64)
+print('$p:', r.hex()[:30] if r else '无响应')
+s.close()
+" 2>/dev/null
+done
+```
+
+> **注意：** 端口编号 `/dev/ttyUSB0`、`/dev/ttyUSB1` 等会随 USB 插拔顺序变化，不建议硬编码端口号。可创建 udev 规则固定别名，或每次启动前先用上述方法确认。
+
+### 启动双夹爪节点
+
+服务名已改为**相对命名**（`~/command`），通过节点名区分：
+
+```bash
+# 启动右爪节点
+ros2 run epg50_gripper_ros epg50_gripper_node --ros-args \
+  -p port:=/dev/ttyUSB0 -r __node:=R_gripper_node &
+
+# 启动左爪节点
+ros2 run epg50_gripper_ros epg50_gripper_node --ros-args \
+  -p port:=/dev/ttyUSB2 -r __node:=L_gripper_node &
+```
+
+验证服务互不冲突：
+```bash
+ros2 service list | grep command
+# 应看到 /L_gripper_node/command 和 /R_gripper_node/command
+```
+
+### service call 控制
+
+```bash
+# === 左爪 ===
+# 使能
+ros2 service call /L_gripper_node/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 9, command: 1, position: 0, speed: 255, torque: 255}"
+# 打开
+ros2 service call /L_gripper_node/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 9, command: 2, position: 0, speed: 255, torque: 255}"
+# 闭合
+ros2 service call /L_gripper_node/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 9, command: 2, position: 255, speed: 255, torque: 255}"
+
+# === 右爪 ===
+# 使能
+ros2 service call /R_gripper_node/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 9, command: 1, position: 0, speed: 255, torque: 255}"
+# 打开
+ros2 service call /R_gripper_node/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 9, command: 2, position: 0, speed: 255, torque: 255}"
+# 闭合
+ros2 service call /R_gripper_node/command epg50_gripper_ros/srv/GripperCommand \
+  "{slave_id: 9, command: 2, position: 255, speed: 255, torque: 255}"
+```
+
+### 在 C++ 代码中使用
+
+```cpp
+// 左爪
+auto L_req      = std::make_shared<epg50_gripper_ros::srv::GripperCommand::Request>();
+L_req->slave_id = 9;
+L_req->command  = 2;     // SET
+L_req->position = 255;   // CLOSE
+L_req->speed    = 255;
+L_req->torque   = 255;
+ServiceCaller<epg50_gripper_ros::srv::GripperCommand>::callServiceSync(
+    node->gripper_command_client_,       // → /L_gripper_node/command
+    L_req, node, std::chrono::seconds(5), "gripper_L");
+
+// 右爪
+auto R_req      = std::make_shared<epg50_gripper_ros::srv::GripperCommand::Request>();
+R_req->slave_id = 9;
+R_req->command  = 2;
+R_req->position = 0;    // OPEN
+R_req->speed    = 255;
+R_req->torque   = 255;
+ServiceCaller<epg50_gripper_ros::srv::GripperCommand>::callServiceSync(
+    node->R_gripper_command_client_,     // → /R_gripper_node/command
+    R_req, node, std::chrono::seconds(5), "gripper_R");
+```
+
+### 命令参数速查
+
+| 参数 | 含义 | 值 |
+|---|---|---|
+| `slave_id` | 从站ID | 当前双总线均为 9 |
+| `command` | 指令类型 | 0=失能, 1=使能, 2=设置参数 |
+| `position` | 夹爪位置 | 0=全开, 255=全闭 |
+| `speed` | 速度 | 0-255 |
+| `torque` | 力矩 | 0-255 |
+
+---
+
 ## 简介
 
 EPG50_Serial 是一个用于与EPG50机械夹爪进行串口通信的C++库。该库实现了基于Modbus RTU协议的命令发送和接收功能，可以控制夹爪的开合、设置夹爪参数（位置、速度、力矩）以及读取夹爪状态。
