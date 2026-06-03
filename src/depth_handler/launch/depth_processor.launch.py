@@ -41,7 +41,7 @@ def generate_launch_description():
     # 夹爪端口参数
     # ═══════════════════════════════════════════════════════════════
     R_gripper_port_arg = DeclareLaunchArgument(
-        'R_gripper_port', default_value='/dev/ttyUSB0',
+        'R_gripper_port', default_value='/dev/ttyUSB1',
         description='右夹爪串口'
     )
     L_gripper_port_arg = DeclareLaunchArgument(
