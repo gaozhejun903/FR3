@@ -1,0 +1,139 @@
+# AI-kimi: 注释掉原有所有静态TF配置，替换为手眼标定结果 (calibration_data/combined_calibration.json)
+# 静态TF配置文件 - 包含多个变换
+
+transforms:
+  # AI-kimi: ========== 以下为原始配置，已全部注释停用 ==========
+  # # TCP到相机链接的变换
+  # - frames:
+  #     parent: Ltcp
+  #     child: camera_link
+  #   # 位置参数 (单位: 米)
+  #   translation:
+  #     x: -0.01              # X轴平移
+  #     y: -0.09              # Y轴平移
+  #     z: 0.056              # Z轴平移
+  #   # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0
+  #     pitch: 0
+  #     yaw: 0
+  #
+  # # TCP到夹爪的变换
+  # - frames:
+  #     parent: Ltcp
+  #     child: Lgripper
+  #   # 位置参数 (单位: 米)
+  #   translation:
+  #     x: 0.0
+  #     y: 0.0
+  #     z: 0.15
+  #   # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0
+  #     pitch: 0
+  #     yaw: 0
+  #
+  # # TCP到夹爪的变换
+  # - frames:
+  #     parent: Rtcp
+  #     child: Rgripper
+  #   # 位置参数 (单位: 米)
+  #   translation:
+  #     x: 0.0
+  #     y: 0.0
+  #     z: 0.15
+  #   # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0
+  #     pitch: 0
+  #     yaw: 0
+  #
+  # - frames:
+  #     parent: Rtcp
+  #     child: Rend
+  # # 位置参数 (单位: 米)
+  #   translation:
+  #     x: 0.030650
+  #     y: -0.007066
+  #     z: 0.190848
+  # # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0.0
+  #     pitch: 0.0
+  #     yaw: 0.0
+  #
+  # - frames:
+  #     parent: Ltcp
+  #     child: Lend
+  # # 位置参数 (单位: 米)
+  #   translation:
+  #     x: -0.019899
+  #     y: -0.003972
+  #     z:  0.191327
+  # # 旋转参数 (单位: 度，使用RPY欧拉角)
+  #   rotation:
+  #     roll: 0.0
+  #     pitch: 0.0
+  #     yaw: 0.0
+
+  # AI-kimi: ========== 第一次手眼标定结果 (2026-05-20)，已停用 ==========
+  # # 来源: calibration_data/combined_calibration.json -> ltcp_to_camera
+  # # camera→flange: [0.0893, 0.0104, 0.0794] | yaw≈-90°
+  # - frames:
+  #     parent: Ltcp
+  #     child: camera_link
+  #   translation:
+  #     x: 0.011550205535439057
+  #     y: -0.08829998528743548
+  #     z: -0.08037542431989243
+  #   rotation:
+  #     roll: -0.8156816220768173
+  #     pitch: -0.7108002290829644
+  #     yaw: 89.99182846092766
+
+  # AI-Deep修改: 第二次手眼标定结果 (2026-05-27), 22/22组有效, TSAI方法, ArUco 0.1m
+  # camera→flange: [0.0872, 0.0103, 0.0766]m | yaw≈-90.7°
+  # 此处发布 Ltcp→camera_link (即 flange→camera 逆变换)
+  - frames:
+      parent: Ltcp
+      child: camera_link
+    translation:
+      x: 0.011508
+      y: -0.085901
+      z: -0.077855
+    rotation:
+      roll: -0.109
+      pitch: -0.859
+      yaw: 90.740
+
+  # AI-Deep修改: 左臂TCP标定结果 (2026-06-04, 4点法, 6组), RMS=7.51mm
+  # 法兰→夹爪尖端偏移, 纯平移, 无旋转 (重新标定)
+  - frames:
+      parent: Ltcp
+      child: Lgripper_tip
+    translation:
+      x: -0.00166
+      y: 0.00182
+      z: 0.18564
+    rotation:
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+
+  # AI-Deep修改: 右臂TCP标定结果 (2026-06-04, 4点法, 7组), RMS=10.7mm
+  # 法兰→夹爪尖端偏移, 纯平移, 无旋转 (夹爪调整后重新标定)
+  - frames:
+      parent: Rtcp
+      child: Rgripper_tip
+    translation:
+      x: 0.00389
+      y: 0.00306
+      z: 0.19254
+    rotation:
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+
+  # AI-Deep: Lrobot_base→Rrobot_base 已移至 robo_ctrl_node.cpp publish_tf_transforms() 直接发布
+  #   world→Rrobot_base = 标定结果 ^{L}T_R (因 L = world原点)
+  #   不再通过static_tf发布, 避免与robo_ctrl动态TF冲突

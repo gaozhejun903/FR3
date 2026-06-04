@@ -1,0 +1,23 @@
+# Dual End TF Collector Configuration
+
+dual_end_tf_collector:
+  ros__parameters:
+    # 数据保存路径
+    # AI-Deep: 更新保存路径 (原值 /home/phoenix/... 已废弃)
+    save_path: "/tmp/dual_end_tf_data"
+    
+    # 自动采集设置
+    auto_capture: false
+    auto_capture_interval: 2000  # 毫秒
+    
+    # TF更新间隔
+    tf_update_interval: 100  # 毫秒
+    
+    # 坐标系设置
+    # AI-Deep: frame名改为Rtcp/Ltcp (原值 Rend/Lend 在TF树中不存在)
+    rend_frame_id: "Rtcp"          # 右臂法兰坐标系
+    lend_frame_id: "Ltcp"          # 左臂法兰坐标系
+    base_frame_id: "Lrobot_base"  # 基座坐标系
+    
+    # 日志级别
+    log_level: "INFO"

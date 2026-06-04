@@ -1,0 +1,19 @@
+{
+  "flange_to_gripper_tip_mm": {
+    "x": 3.89,
+    "y": 3.06,
+    "z": 192.54
+  },
+  "num_samples": 7,
+  "rms_mm": 10.67,
+  "per_sample_deviation_mm": [
+    2.1,
+    4.9,
+    2.3,
+    2.4,
+    4.5,
+    3.9,
+    3.0
+  ],
+  "note": "AI-Deep: pose_0005已删除(异常样本)，当前7组有效，结果与static_transforms.yaml一致"
+}
