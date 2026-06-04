@@ -1,9 +1,10 @@
 """
 任务节点 — 视觉检测 → 机械臂移动 → 夹爪抓取 → 放置复位
 
-双后端支持:
-  - use_moveit=True  → MoveIt Action Client (仿真, 用于 fairino3_v6_moveit2_config demo)
-  - use_moveit=False → robo_ctrl 服务接口 (实机)
+三后端支持:
+  - use_moveit=True      → MoveIt Action Client (仿真, 用于 fairino3_v6_moveit2_config demo)
+  - use_moveit_robo=True → MoveIt 规划 + robo_ctrl RobotServoJoint 执行 (实机, 混合模式)
+  - use_moveit=False     → robo_ctrl 服务接口 (实机, 线性插值)
 
 状态机:
   IDLE -> OBSERVATION -> APPROACHING -> GRABBING -> RETREATING -> PLACING -> IDLE
@@ -112,6 +113,9 @@ class ArmTaskManager(Node):
         # ====== 参数 ====================================================
         self.declare_parameter("use_moveit", False)
         self._use_moveit = self.get_parameter("use_moveit").value
+
+        self.declare_parameter("use_moveit_robo", False)
+        self._use_moveit_robo = self.get_parameter("use_moveit_robo").value
 
         self.declare_parameter("use_virtual_vision", False)
         self._use_virtual_vision = self.get_parameter("use_virtual_vision").value
@@ -257,6 +261,8 @@ class ArmTaskManager(Node):
         # ====== 根据模式初始化后端 ======================================
         if self._use_moveit:
             self._init_moveit_backend()
+        elif self._use_moveit_robo:
+            self._init_moveit_robo_backend(prefix)
         else:
             self._init_robo_ctrl_backend(prefix)
 
@@ -268,7 +274,7 @@ class ArmTaskManager(Node):
                 PoseStamped, "target_pose", self._target_pose_cb, 10
             )
             self.get_logger().info("仿真模式: 已订阅 target_pose")
-        elif self._use_virtual_vision:
+        elif self._use_moveit_robo or self._use_virtual_vision:
             # 虚拟视觉: 订阅 target_pose (来自 virtual_vision_node)
             from geometry_msgs.msg import PoseStamped
             self._pose_sub = self.create_subscription(
@@ -301,7 +307,7 @@ class ArmTaskManager(Node):
         self._init_thread = threading.Thread(target=self._init_services, daemon=True)
         self._init_thread.start()
 
-        mode = "MoveIt(仿真)" if self._use_moveit else "robo_ctrl(实机)"
+        mode = "MoveIt(仿真)" if self._use_moveit else ("MoveIt+robo_ctrl(混合)" if self._use_moveit_robo else "robo_ctrl(实机)")
         self.get_logger().info(
             f"ArmTaskManager 启动 | mode={mode} | task={self._task_mode} | "
             f"gripper_id={self._gripper_id} | "
@@ -379,6 +385,47 @@ class ArmTaskManager(Node):
         )
 
     # =================================================================
+    # MoveIt + robo_ctrl 混合后端初始化
+    # =================================================================
+    def _init_moveit_robo_backend(self, prefix):
+        """初始化 MoveIt 规划 + robo_ctrl 执行 的混合后端。
+
+        使用 fairino3_v6_planner 的 get_joint_states 服务进行规划,
+        使用 robo_ctrl 的 RobotServoJoint 服务进行执行。
+        """
+        from my_arm_control.moveit_controller import MoveItController
+
+        self._moveit_ctrl = MoveItController(
+            node=self,
+            prefix=prefix,
+            planner_service_name="get_joint_states",
+            servo_service_name="robot_servo_joint",
+        )
+
+        # 右臂的 MoveItController
+        if prefix != "/R":
+            self._R_moveit_ctrl = MoveItController(
+                node=self,
+                prefix="/R",
+                planner_service_name="get_joint_states",
+                servo_service_name="robot_servo_joint",
+            )
+        else:
+            self._R_moveit_ctrl = None
+
+        # 夹爪: 服务客户端 (与 robo_ctrl 模式共用)
+        from epg50_gripper_ros.srv import GripperCommand
+        self._gripper_client = self.create_client(
+            GripperCommand, "gripper_command"
+        )
+        self._R_gripper_client = self.create_client(
+            GripperCommand, "R_gripper_command"
+        )
+
+        self._velocity = self.get_parameter("velocity").value
+        self._accel = self.get_parameter("acceleration").value
+
+    # =================================================================
     # 等待服务就绪
     # =================================================================
     def _init_services(self):
@@ -392,6 +439,54 @@ class ArmTaskManager(Node):
                 f"MoveGroup 就绪 | 组={self._planning_group} "
                 f"末端={self._ee_link}"
             )
+        elif self._use_moveit_robo:
+            # 混合模式: 检查 fairino3_v6_planner 服务和 RobotServoJoint 服务
+            prefix = self.get_parameter("robot_prefix").value
+            from fairino3_v6_planner.srv import GetJointStates
+
+            # 检查 planner 服务 (全局服务)
+            planner_client = self.create_client(
+                GetJointStates, "get_joint_states"
+            )
+            if not planner_client.wait_for_service(timeout_sec=30.0):
+                self.get_logger().error(
+                    "fairino3_v6_planner/get_joint_states 不可用 (30s 超时)"
+                )
+                return
+            planner_client.destroy()
+
+            # 检查 RobotServoJoint 服务
+            from robo_ctrl.srv import RobotServoJoint
+            servo_client = self.create_client(
+                RobotServoJoint, f"{prefix}/robot_servo_joint"
+            )
+            if not servo_client.wait_for_service(timeout_sec=30.0):
+                self.get_logger().error(
+                    f"{prefix}/robot_servo_joint 不可用 (30s 超时)"
+                )
+                return
+            servo_client.destroy()
+
+            # 右臂 (可选)
+            if prefix != "/R":
+                R_servo_client = self.create_client(
+                    RobotServoJoint, "/R/robot_servo_joint"
+                )
+                if not R_servo_client.wait_for_service(timeout_sec=5.0):
+                    self.get_logger().warn("/R/robot_servo_joint 不可用, 双臂功能受限")
+                    self._right_arm_ready = False
+                R_servo_client.destroy()
+
+            # 夹爪服务可选
+            from epg50_gripper_ros.srv import GripperCommand
+            if not self._gripper_client.wait_for_service(timeout_sec=5.0):
+                self.get_logger().warn("左臂夹爪服务不可用, 跳过左臂夹爪控制")
+                self._gripper_client = None
+            if not self._R_gripper_client.wait_for_service(timeout_sec=5.0):
+                self.get_logger().warn("右臂夹爪服务不可用, 跳过右臂夹爪控制")
+                self._R_gripper_client = None
+
+            self.get_logger().info("混合模式服务就绪 | planner + RobotServoJoint")
         else:
             prefix = self.get_parameter("robot_prefix").value
             required = [
@@ -588,8 +683,9 @@ class ArmTaskManager(Node):
     # 任务一: 拧瓶盖 + 倒可乐
     # =================================================================
     def _task_opencap(self):
-        """拧瓶盖任务流程 (对应 dualarm main.cpp)。
+        """拧瓶盖任务流程 (按比赛规则).
 
+        比赛规则: 瓶盖已开启过 → R臂简单旋开即可; 放置任意位置.
         流程:
           1. L arm → 观测位
           2. R arm → CAP_OPEN_JOINTS_R (预备位)
@@ -600,10 +696,9 @@ class ArmTaskManager(Node):
           7. L arm → 撤离 (-150x, +30z)
           8. L arm → CAP_OPEN_JOINTS_L (瓶盖准备位)
           9. R arm → CAP_OPEN_JOINTS_R (瓶盖位)
-          10. 拧瓶盖循环 (3轮): R夹 → 圆弧60° → R松 → 回位
-          11. 最后转30°
-          12. 倒可乐: L J6 旋转
-          13. 放回杯子
+          10. 开瓶盖 (单次旋转, 瓶盖已开启过)
+          11. R 抓杯, L 倒水
+          12. 任意位置放置
         """
         GRIPPER_ID_L = self._gripper_id
         GRIPPER_ID_R = 10
@@ -621,8 +716,10 @@ class ArmTaskManager(Node):
 
             # ---- Step 0.5: 伺服模式启动 ----
             self.get_logger().info("[拧瓶盖] Step 0.5: 伺服模式启动")
-            self._servo_move_start(side="L")
-            self._servo_move_start(side="R")
+            # 进入伺服模式 (仅 robo_ctrl 模式需要, 混合模式由 MoveItController 内部处理)
+            if not self._use_moveit_robo:
+                self._servo_move_start(side="L")
+                self._servo_move_start(side="R")
             time.sleep(1.0)
 
             # ---- Step 1: L arm → 观测位 ----
@@ -708,76 +805,61 @@ class ArmTaskManager(Node):
             self._robo_ctrl_act_j(self._cap_open_joints_r, side="R")
             time.sleep(2.0)
 
-            # ---- Step 10: 拧瓶盖循环 (3轮) ----
+            # ---- Step 10: 开瓶盖 (单次旋转, 瓶盖已开启过) ----
             self._set_state(TaskState.APPROACHING)
-            for i in range(3):
-                self.get_logger().info(f"[拧瓶盖] Step 10: 拧瓶盖 第{i+1}/3轮")
+            self.get_logger().info("[开瓶盖] Step 10: 开瓶盖 (瓶盖已开启过, 简单旋开)")
 
-                # R 夹爪夹紧
-                self._close_gripper(gripper_id=GRIPPER_ID_R)
-                time.sleep(0.5)
-
-                # R 圆弧旋转 60°
-                self._robo_ctrl_arc(
-                    circle_center=[155, 0, 0], radian=60.0,
-                    side="R", point_count=200, message_time=0.006
-                )
-                time.sleep(3.0)
-
-                # R 夹爪松开
-                self._open_gripper(gripper_id=GRIPPER_ID_R)
-                time.sleep(0.5)
-
-                # R 回到瓶盖位
-                self._robo_ctrl_act_j(self._cap_open_joints_r, side="R")
-                time.sleep(2.0)
-
-            # ---- Step 11: 最后转30° ----
-            self.get_logger().info("[拧瓶盖] Step 11: 最后转30°")
+            # R 夹爪夹紧瓶盖
             self._close_gripper(gripper_id=GRIPPER_ID_R)
             time.sleep(0.5)
-            self._robo_ctrl_arc(
-                circle_center=[155, 0, 0], radian=30.0,
-                side="R", point_count=150, message_time=0.008
-            )
-            time.sleep(2.5)
+
+            # R 臂简单旋转旋开 (一次到位, 不需要多轮)
+            self._robo_ctrl_act_j([0, 0, 0, 0, 0, 45], incremental=True,
+                                   point_count=100, message_time=0.01, side="R")
+            time.sleep(2.0)
+
+            # R 夹爪松开 (丢弃瓶盖)
             self._open_gripper(gripper_id=GRIPPER_ID_R)
             time.sleep(0.5)
 
-            # ---- Step 12: 倒可乐 ----
-            self._set_state(TaskState.PLACING)
-            self.get_logger().info("[拧瓶盖] Step 12: 倒可乐")
+            # R 臂回退
+            self._robo_ctrl_act_j([0, 0, 0, 0, 0, -45], incremental=True,
+                                   point_count=100, message_time=0.01, side="R")
+            time.sleep(2.0)
 
-            # L J6 旋转 60°
+            # ---- Step 11: 倒水 (L瓶倾斜倒水, R杯接水) ----
+            self._set_state(TaskState.PLACING)
+            self.get_logger().info("[倒水] Step 11: 倒水")
+
+            # L J6 倾斜倒水
             self._robo_ctrl_act_j([0, 0, 0, 0, 0, 60], incremental=True,
                                    point_count=70, message_time=0.06, side="L")
             time.sleep(5.0)
 
-            # L J6 再旋转 30°
-            self._robo_ctrl_act_j([0, 0, 0, 0, 0, 30], incremental=True,
-                                   point_count=30, message_time=0.03, side="L")
-            time.sleep(2.0)
-
-            # L J6 回转 -87°
-            self._robo_ctrl_act_j([0, 0, 0, 0, 0, -87], incremental=True,
-                                   point_count=30, message_time=0.03, side="L")
+            # L J6 回正
+            self._robo_ctrl_act_j([0, 0, 0, 0, 0, -60], incremental=True,
+                                   point_count=70, message_time=0.06, side="L")
             time.sleep(3.0)
 
-            # ---- Step 13: 放回杯子 ----
-            self.get_logger().info("[拧瓶盖] Step 13: 放回杯子")
+            # ---- Step 12: 任意位置放置 ----
+            self.get_logger().info("[放置] Step 12: 任意位置放置 (直接释放)")
 
-            # 先移到放置位
-            if not self._robo_ctrl_move_cart(self._place_pose, side="L"):
-                self.get_logger().warn("移到放置位失败, 尝试原地释放")
-            time.sleep(2.0)
-
-            # 松开夹爪
+            # 直接松开左臂夹爪 (瓶子掉落桌面任意位置)
             self._open_gripper(gripper_id=GRIPPER_ID_L)
             time.sleep(0.7)
 
             # L arm 撤离
-            self._robo_ctrl_move_cart([-80, 0, 30, 0, 0, 0], is_incremental=True, side="L")
+            self._robo_ctrl_move_cart([0, 0, self._retreat_z, 0, 0, 0], is_incremental=True, side="L")
             time.sleep(2.0)
+
+            # 松开右臂夹爪 (水杯放置桌面任意位置)
+            self._open_gripper(gripper_id=GRIPPER_ID_R)
+            time.sleep(0.5)
+
+            # R arm 撤离
+            if hasattr(self, '_R_moveit_ctrl') or hasattr(self, '_R_robot_act_j_client'):
+                self._robo_ctrl_move_cart([0, 0, self._retreat_z, 0, 0, 0], is_incremental=True, side="R")
+                time.sleep(2.0)
 
             self.get_logger().info("==== 拧瓶盖任务完成 ====")
             self._set_state(TaskState.IDLE)
@@ -832,6 +914,22 @@ class ArmTaskManager(Node):
             pose.pose.position.z = target_pos[2]
             pose.pose.orientation.w = 1.0
             return self._moveit_move_to_pose(pose, phase="接近目标")
+        elif self._use_moveit_robo:
+            # 混合模式: MoveIt 规划到物体上方 + RobotServoJoint 执行
+            if self._current_tcp is None:
+                self.get_logger().error("TCP 位姿未知")
+                return False
+
+            dx = target_pos[0] - self._current_tcp.x
+            dy = target_pos[1] - self._current_tcp.y
+            dz = self._desk_height + self._object_height - self._current_tcp.z
+
+            self.get_logger().info(
+                f"接近增量: dx={dx:.1f} dy={dy:.1f} dz={dz:.1f} mm | "
+                f"TCP=({self._current_tcp.x:.1f}, {self._current_tcp.y:.1f}, "
+                f"{self._current_tcp.z:.1f})"
+            )
+            return self._moveit_ctrl.plan_and_move_incremental(dx, dy, dz)
         else:
             # 实机: 计算增量偏移
             if self._current_tcp is None:
@@ -865,6 +963,14 @@ class ArmTaskManager(Node):
             ps.pose.position.z = pose[2]
             ps.pose.orientation.w = 1.0
             return self._moveit_move_to_pose(ps, phase=phase)
+        elif self._use_moveit_robo:
+            # 混合模式: MoveIt 规划 + RobotServoJoint 执行
+            if incremental:
+                return self._moveit_ctrl.plan_and_move_incremental(
+                    pose[0], pose[1], pose[2]
+                )
+            else:
+                return self._moveit_ctrl.plan_and_move_cart(pose)
         else:
             return self._robo_ctrl_move_cart(pose, is_incremental=incremental)
 
@@ -1035,6 +1141,18 @@ class ArmTaskManager(Node):
         return True
 
     def _robo_ctrl_move_cart(self, pose, is_incremental=False, side="L") -> bool:
+        # 混合模式: 委托给 MoveItController
+        if self._use_moveit_robo:
+            ctrl = self._R_moveit_ctrl if side == "R" else self._moveit_ctrl
+            if is_incremental:
+                return ctrl.plan_and_move_incremental(
+                    float(pose[0]), float(pose[1]), float(pose[2])
+                )
+            else:
+                return ctrl.plan_and_move_cart(
+                    [float(v) for v in pose]
+                )
+
         from robo_ctrl.srv import RobotMoveCart
         from robo_ctrl.msg import TCPPose
 
@@ -1071,6 +1189,10 @@ class ArmTaskManager(Node):
         return True
 
     def _robo_ctrl_act_incremental(self, dx, dy, dz) -> bool:
+        # 混合模式: 委托给 MoveItController
+        if self._use_moveit_robo:
+            return self._moveit_ctrl.plan_and_move_incremental(dx, dy, dz)
+
         from robo_ctrl.srv import RobotAct
         from robo_ctrl.msg import TCPPose
 
@@ -1099,6 +1221,11 @@ class ArmTaskManager(Node):
         incremental: True=增量, False=绝对
         side: "L"=左臂, "R"=右臂
         """
+        # 混合模式: 委托给 MoveItController
+        if self._use_moveit_robo:
+            ctrl = self._R_moveit_ctrl if side == "R" else self._moveit_ctrl
+            return ctrl.plan_and_move_joint(list(joints))
+
         from robo_ctrl.srv import RobotActJ
 
         req = RobotActJ.Request()

@@ -32,11 +32,17 @@ class PourState(Enum):
 
 
 class Task1PourService(Node):
-    """任务一倒水服务状态机。
+    """任务一倒水服务状态机 (按比赛规则)。
+
+    比赛规则要求:
+      - 双臂协作: L臂持瓶, R臂开盖/持杯
+      - 瓶盖非出厂状态为已经开启过 (已拧开过的) → R臂简单旋开即可
+      - 一手持瓶, 一手持杯将饮品倒入水杯中
+      - 最后将瓶子和水杯放置在工作台面上任意位置即可
 
     流程:
-      IDLE → OBSERVE → WAIT_VISION → GRASP_BOTTLE → GRASP_CUP
-      → OPEN_CAP → POUR → PLACE_BOTTLE → PLACE_CUP
+      IDLE → OBSERVE → GRASP_BOTTLE(L) → OPEN_CAP(R简单旋开)
+      → GRASP_CUP(R) → POUR(L倒水+R接杯) → PLACE(任意位置)
       → NEXT_DRINK → (重复) → DONE
     """
 
@@ -45,6 +51,10 @@ class Task1PourService(Node):
 
         self.declare_parameter("robot_prefix", "/L")
         self._prefix = self.get_parameter("robot_prefix").value
+
+        # 是否使用 MoveIt + robo_ctrl 混合模式
+        self.declare_parameter("use_moveit_robo", False)
+        self._use_moveit_robo = self.get_parameter("use_moveit_robo").value
 
         # 观测位姿 (mm/度)
         self.declare_parameter("observe_pose", [99.917, -144.210, 542.554, -125.357, 0.0, -100.476])
@@ -118,7 +128,10 @@ class Task1PourService(Node):
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
 
-        self._init_robo_ctrl()
+        if self._use_moveit_robo:
+            self._init_moveit_robo()
+        else:
+            self._init_robo_ctrl()
 
         self._vision_subs = {
             'bottle_water': self.create_subscription(
@@ -150,6 +163,7 @@ class Task1PourService(Node):
     # ==================== 初始化 ====================
 
     def _init_robo_ctrl(self):
+        """robo_ctrl 线性插值后端。"""
         self._move_cart_L = self.create_client(RobotMoveCart, f'{self._prefix}/robot_move_cart')
         self._act_L = self.create_client(RobotAct, f'{self._prefix}/robot_act')
         self._act_j_L = self.create_client(RobotActJ, f'{self._prefix}/robot_act_j')
@@ -160,7 +174,53 @@ class Task1PourService(Node):
         self._act_j_R = self.create_client(RobotActJ, '/R/robot_act_j')
         self._gripper_R = self.create_client(GripperCommand, 'R_gripper_command')
 
+    def _init_moveit_robo(self):
+        """MoveIt 规划 + robo_ctrl 执行 混合后端。"""
+        from my_arm_control.moveit_controller import MoveItController
+
+        self._moveit_ctrl_L = MoveItController(
+            node=self,
+            prefix=self._prefix,
+            planner_service_name="get_joint_states",
+            servo_service_name="robot_servo_joint",
+        )
+        self._moveit_ctrl_R = MoveItController(
+            node=self,
+            prefix="/R",
+            planner_service_name="get_joint_states",
+            servo_service_name="robot_servo_joint",
+        )
+
+        self._gripper_L = self.create_client(GripperCommand, 'gripper_command')
+        self._gripper_R = self.create_client(GripperCommand, 'R_gripper_command')
+
     def _wait_services(self):
+        if self._use_moveit_robo:
+            # 混合模式: 检查 fairino3_v6_planner + RobotServoJoint
+            from fairino3_v6_planner.srv import GetJointStates
+            from robo_ctrl.srv import RobotServoJoint
+
+            planner_client = self.create_client(GetJointStates, "get_joint_states")
+            if not planner_client.wait_for_service(timeout_sec=30.0):
+                self.get_logger().error("get_joint_states 不可用 (30s 超时)")
+                return
+            planner_client.destroy()
+
+            for prefix_name in [self._prefix, "/R"]:
+                servo_client = self.create_client(RobotServoJoint, f"{prefix_name}/robot_servo_joint")
+                if not servo_client.wait_for_service(timeout_sec=10.0):
+                    self.get_logger().warn(f"{prefix_name}/robot_servo_joint 不可用")
+                servo_client.destroy()
+
+            for client, name in [(self._gripper_L, 'gripper_command'), (self._gripper_R, 'R_gripper_command')]:
+                if not client.wait_for_service(timeout_sec=5.0):
+                    self.get_logger().warn(f'{name} 不可用, 跳过夹爪')
+
+            self._services_ready = True
+            self.get_logger().info('混合模式服务就绪, 等待视觉数据...')
+            self._start_flow()
+            return
+
         required = [
             (self._move_cart_L, f'{self._prefix}/robot_move_cart'),
             (self._act_L, f'{self._prefix}/robot_act'),
@@ -264,6 +324,16 @@ class Task1PourService(Node):
         return True
 
     def _move_cart(self, pose, side='L', incremental=False):
+        # 混合模式: 委托给 MoveItController
+        if self._use_moveit_robo:
+            ctrl = self._moveit_ctrl_R if side == 'R' else self._moveit_ctrl_L
+            if incremental:
+                return ctrl.plan_and_move_incremental(
+                    float(pose[0]), float(pose[1]), float(pose[2])
+                )
+            else:
+                return ctrl.plan_and_move_cart([float(v) for v in pose])
+
         tcp = self._current_tcp_R if side == 'R' else self._current_tcp_L
         if incremental:
             if tcp is not None:
@@ -297,6 +367,11 @@ class Task1PourService(Node):
         return True
 
     def _act_j(self, joints, side='L', incremental=False, point_count=100, message_time=0.01):
+        # 混合模式: 委托给 MoveItController (plan_and_move_joint)
+        if self._use_moveit_robo:
+            ctrl = self._moveit_ctrl_R if side == 'R' else self._moveit_ctrl_L
+            return ctrl.plan_and_move_joint(list(joints))
+
         moving_tcp = self._current_tcp_L if side == 'L' else self._current_tcp_R
         static_tcp = self._current_tcp_R if side == 'L' else self._current_tcp_L
         if moving_tcp is not None and static_tcp is not None:
@@ -328,6 +403,11 @@ class Task1PourService(Node):
         return True
 
     def _act_incremental(self, dx, dy, dz, side='L'):
+        # 混合模式: 委托给 MoveItController
+        if self._use_moveit_robo:
+            ctrl = self._moveit_ctrl_R if side == 'R' else self._moveit_ctrl_L
+            return ctrl.plan_and_move_incremental(dx, dy, dz)
+
         tcp = self._current_tcp_R if side == 'R' else self._current_tcp_L
         if tcp is not None:
             target_xyz = (tcp.x + dx, tcp.y + dy, tcp.z + dz)
@@ -424,6 +504,7 @@ class Task1PourService(Node):
 
     def _run_pour_service(self):
         self.get_logger().info('==== 开始任务一: 倒水服务 ====')
+        self.get_logger().info('规则: 双臂协作 | 瓶盖已开启过 | 一手持瓶一手持杯倒水 | 放任意位置')
 
         deadline = time.monotonic() + 30.0
         while len(self._objects) < 4:
@@ -455,9 +536,6 @@ class Task1PourService(Node):
             bottle_pos = self._objects[bottle_name]
             cup_pos = self._objects[cup_name]
 
-            bottle_orig = bottle_pos.copy()
-            cup_orig = cup_pos.copy()
-
             try:
                 # ---- Phase 1: OBSERVE ----
                 self._set_state(PourState.OBSERVE)
@@ -484,9 +562,44 @@ class Task1PourService(Node):
                     self.get_logger().warn('左臂撤离失败')
                 self._wait_motion_done(side='L', timeout=5.0)
 
-                # ---- Phase 3: GRASP CUP (R arm) ----
+                # ---- Phase 3: OPEN CAP (瓶盖已开启过, 简单旋开即可) ----
+                self._set_state(PourState.OPEN_CAP)
+                self.get_logger().info(f'[Phase 3] 开瓶盖 (瓶盖已开启过, 简单旋开)')
+
+                # 左臂持瓶到开盖位
+                if not self._act_j(self._cap_open_joints_l, side='L'):
+                    self.get_logger().warn('左臂移往开盖位失败')
+                self._wait_motion_done(side='L', timeout=5.0)
+
+                # 右臂到瓶盖位
+                if not self._act_j(self._cap_open_joints_r, side='R'):
+                    self.get_logger().warn('右臂移往瓶盖位失败')
+                self._wait_motion_done(side='R', timeout=5.0)
+
+                # 右夹爪夹紧瓶盖
+                if not self._close_gripper(self._gripper_id_R):
+                    self.get_logger().warn('右夹爪夹紧瓶盖失败')
+                self._wait_motion(0.3)
+
+                # 右臂简单旋转旋开瓶盖 (瓶盖已开启过, 一次旋转即可)
+                self.get_logger().info('右臂旋开瓶盖 (单次旋转)')
+                if not self._act_j([0, 0, 0, 0, 0, 45], side='R', incremental=True, point_count=100, message_time=0.01):
+                    self.get_logger().warn('旋开瓶盖失败')
+                self._wait_motion_done(side='R', timeout=5.0)
+
+                # 右夹爪松开瓶盖 (丢弃瓶盖)
+                if not self._open_gripper(self._gripper_id_R):
+                    self.get_logger().warn('松开瓶盖失败')
+                self._wait_motion(0.3)
+
+                # 右臂回退
+                if not self._act_j([0, 0, 0, 0, 0, -45], side='R', incremental=True, point_count=100, message_time=0.01):
+                    self.get_logger().warn('右臂回退失败')
+                self._wait_motion_done(side='R', timeout=5.0)
+
+                # ---- Phase 4: GRASP CUP (R arm) ----
                 self._set_state(PourState.GRASP_CUP)
-                self.get_logger().info(f'[Phase 3] 右臂抓取水杯: {cup_name}')
+                self.get_logger().info(f'[Phase 4] 右臂抓取水杯: {cup_name} (一手持瓶一手持杯)')
 
                 if not self._approach_object(cup_pos, side='R', target_height=self._desk_height + self._cup_height):
                     self._set_state(PourState.ERROR)
@@ -501,46 +614,12 @@ class Task1PourService(Node):
                     self.get_logger().warn('右臂撤离失败')
                 self._wait_motion_done(side='R', timeout=5.0)
 
-                # ---- Phase 4: OPEN CAP ----
-                self._set_state(PourState.OPEN_CAP)
-                self.get_logger().info(f'[Phase 4] 拧瓶盖')
-
-                if not self._act_j(self._cap_open_joints_l, side='L'):
-                    self.get_logger().warn('左臂移往拧盖位失败')
-                self._wait_motion_done(side='L', timeout=5.0)
-
-                if not self._act_j(self._cap_open_joints_r, side='R'):
-                    self.get_logger().warn('右臂移往接杯位失败')
-                self._wait_motion_done(side='R', timeout=5.0)
-
-                if not self._close_gripper(self._gripper_id_L):
-                    self.get_logger().warn('左夹爪夹紧瓶盖失败')
-                self._wait_motion(0.3)
-
-                for i in range(2):
-                    self.get_logger().info(f'拧盖圈 {i+1}/2')
-                    if not self._act_j([0, 0, 0, 0, 0, 30], side='L', incremental=True, point_count=100, message_time=0.01):
-                        self.get_logger().warn(f'旋转圈 {i+1} 失败')
-                    self._wait_motion_done(side='L', timeout=5.0)
-
-                if not self._open_gripper(self._gripper_id_L):
-                    self.get_logger().warn('松开瓶盖失败')
-                self._wait_motion(0.3)
-
-                if not self._act_j([0, 0, 0, 0, 0, -60], side='L', incremental=True, point_count=100, message_time=0.01):
-                    self.get_logger().warn('回退失败')
-                self._wait_motion_done(side='L', timeout=5.0)
-
-                # ---- Phase 5: POUR ----
+                # ---- Phase 5: POUR (左臂持瓶倾斜, 右臂持杯接水) ----
                 self._set_state(PourState.POUR)
-                self.get_logger().info(f'[Phase 5] 倒水: {drink}')
-
-                if not self._close_gripper(self._gripper_id_L):
-                    self.get_logger().warn('左夹爪夹紧瓶子失败')
-                self._wait_motion(0.3)
+                self.get_logger().info(f'[Phase 5] 倒水: {drink} (左瓶右杯)')
 
                 tilt_angle = self._pour_j6_angle
-                self.get_logger().info(f'倾斜 {tilt_angle}° 倒水')
+                self.get_logger().info(f'左臂倾斜 {tilt_angle}° 倒水')
                 if not self._act_j([0, 0, 0, 0, 0, tilt_angle], side='L', incremental=True, point_count=70, message_time=0.06):
                     self.get_logger().warn('倾斜倒水失败')
                 self._wait_motion_done(side='L', timeout=10.0)
@@ -550,34 +629,30 @@ class Task1PourService(Node):
                     self.get_logger().warn('回正失败')
                 self._wait_motion_done(side='L', timeout=5.0)
 
-                # ---- Phase 6: PLACE BOTTLE（回到原位） ----
+                # ---- Phase 6: PLACE (任意位置 — 直接释放, 不回原位) ----
                 self._set_state(PourState.PLACE_BOTTLE)
-                self.get_logger().info(f'[Phase 6] 放回瓶子到原位')
+                self.get_logger().info(f'[Phase 6] 放置瓶子 — 任意位置 (直接释放)')
 
-                if not self._approach_object(bottle_orig, side='L', target_height=self._desk_height + self._bottle_height):
-                    self.get_logger().warn('回到瓶原位置失败')
-                self._wait_motion_done(side='L', timeout=5.0)
-
+                # 直接松开左臂夹爪, 瓶子掉落桌面任意位置
                 if not self._open_gripper(self._gripper_id_L):
                     self.get_logger().warn('释放瓶子失败')
                 self._wait_motion(0.5)
 
+                # 左臂撤离
                 if not self._move_cart([0, 0, self._retreat_z, 0, 0, 0], side='L', incremental=True):
                     self.get_logger().warn('左臂撤离失败')
                 self._wait_motion_done(side='L', timeout=5.0)
 
-                # ---- Phase 7: PLACE CUP（回到原位） ----
+                # ---- Phase 7: PLACE CUP (任意位置 — 直接释放, 不回原位) ----
                 self._set_state(PourState.PLACE_CUP)
-                self.get_logger().info(f'[Phase 7] 放回水杯到原位')
+                self.get_logger().info(f'[Phase 7] 放置水杯 — 任意位置 (直接释放)')
 
-                if not self._approach_object(cup_orig, side='R', target_height=self._desk_height + self._cup_height):
-                    self.get_logger().warn('回到杯原位置失败')
-                self._wait_motion_done(side='R', timeout=5.0)
-
+                # 直接松开右臂夹爪, 水杯放置桌面任意位置
                 if not self._open_gripper(self._gripper_id_R):
                     self.get_logger().warn('释放水杯失败')
                 self._wait_motion(0.5)
 
+                # 右臂撤离
                 if not self._move_cart([0, 0, self._retreat_z, 0, 0, 0], side='R', incremental=True):
                     self.get_logger().warn('右臂撤离失败')
                 self._wait_motion_done(side='R', timeout=5.0)

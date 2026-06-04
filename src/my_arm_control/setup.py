@@ -16,7 +16,7 @@ setup(
         (os.path.join('lib', package_name),
             glob(os.path.join('lib', package_name, '*'))),
     ],
-    install_requires=['setuptools', 'pyserial'],
+    install_requires=['setuptools', 'pyserial', 'tf-transformations'],
     zip_safe=True,
     maintainer='user',
     maintainer_email='user@example.com',
