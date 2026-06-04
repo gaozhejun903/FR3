@@ -61,7 +61,7 @@ class FourPointTCPCalibrator(Node):  # AI-Deep修改：交互式四点TCP标定�
         self.get_logger().info('')
 
     def _load_poses(self):  # AI-Deep修改：加载已保存数据
-        files = sorted([f for f in os.listdir(self.save_path) if f.endswith('.json')])
+        files = sorted([f for f in os.listdir(self.save_path) if f.startswith('pose_') and f.endswith('.json')])  # AI-Deep修改: 只加载 pose_ 前缀文件
         for fname in files:
             with open(os.path.join(self.save_path, fname), 'r') as fp:
                 data = json.load(fp)
@@ -115,7 +115,7 @@ class FourPointTCPCalibrator(Node):  # AI-Deep修改：交互式四点TCP标定�
     def calibrate(self):
         if len(self.poses) < 4:
             self.get_logger().error(f'至少需要 4 组数据，当前仅 {len(self.poses)} 组')
-            return None
+            return None, None, None
 
         R0, t0 = self.poses[0]['R'], self.poses[0]['t']
         A, b = [], []
@@ -129,9 +129,16 @@ class FourPointTCPCalibrator(Node):  # AI-Deep修改：交互式四点TCP标定�
         offset, residuals, _, _ = np.linalg.lstsq(A, b, rcond=None)
 
         offset = offset.flatten()
-        return offset, residuals
 
-    def print_result(self, offset, residuals):
+        # 反算固定点位置，用于诊断各组数据质量  # AI-Deep修改
+        fixed_points = []
+        for i, p in enumerate(self.poses):
+            fp = p['R'] @ offset + p['t']
+            fixed_points.append(fp)
+
+        return offset, residuals, fixed_points
+
+    def print_result(self, offset, residuals, fixed_points):
         self.get_logger().info('')
         self.get_logger().info('========== 标定结果 ==========')
         self.get_logger().info(f'TCP偏移 (法兰 → 夹爪尖端):')
@@ -141,13 +148,34 @@ class FourPointTCPCalibrator(Node):  # AI-Deep修改：交互式四点TCP标定�
         if len(residuals) > 0:
             rms = np.sqrt(np.mean(residuals))
             self.get_logger().info(f'拟合残差 RMS: {rms*1000:.3f} mm')
+        self.get_logger().info('--------------------------------')
+
+        # 诊断每组数据：反算固定点偏差  # AI-Deep修改
+        if fixed_points is not None and len(fixed_points) > 0:
+            mean_fp = np.mean(fixed_points, axis=0)
+            deviations = [np.linalg.norm(fp - mean_fp) * 1000 for fp in fixed_points]  # mm
+            med_dev = np.median(deviations)
+            threshold = max(med_dev * 3.0, 10.0)  # 3倍中位偏差 或 至少10mm
+
+            self.get_logger().info(f'各组固定点偏差 (阈值={threshold:.1f}mm):')
+            for i, dev in enumerate(deviations):
+                flag = ' ⚠️ 异常!' if dev > threshold else ''
+                self.get_logger().info(f'  样本{i}: {dev:.1f} mm{flag}')
+
+            if any(d > threshold for d in deviations):
+                self.get_logger().warn('')
+                self.get_logger().warn('⚠️ 存在异常样本! 建议删除对应 pose_XXXX.json 后重算.')
+                self.get_logger().warn(f'  删除命令: rm <保存路径>/pose_{{{",".join(str(i) for i, d in enumerate(deviations) if d > threshold)}}}.json')
+                self.get_logger().warn('  然后运行: python3 4point_interactive.py --resume ... 加载数据后直接 q 即可')
+
         self.get_logger().info('================================')
 
         # 保存结果文件  # AI-Deep修改：结果自动存盘
         if self.save_path:
             result = {'flange_to_gripper_tip_mm': {'x': offset[0]*1000, 'y': offset[1]*1000, 'z': offset[2]*1000},
                       'num_samples': len(self.poses),
-                      'rms_mm': float(np.sqrt(np.mean(residuals)))*1000 if len(residuals) > 0 else None}
+                      'rms_mm': float(np.sqrt(np.mean(residuals)))*1000 if len(residuals) > 0 else None,
+                      'per_sample_deviation_mm': [float(d) for d in deviations] if fixed_points is not None else []}
             rpath = os.path.join(self.save_path, 'tcp_calibration_result.json')
             with open(rpath, 'w') as fp:
                 json.dump(result, fp, indent=2)
@@ -173,8 +201,8 @@ def main():  # AI-Deep修改
     def signal_handler(*_):
         if len(node.poses) >= 4:
             node.get_logger().info('收到退出信号，开始计算...')
-            offset, residuals = node.calibrate()
-            node.print_result(offset, residuals)
+            offset, residuals, fixed_points = node.calibrate()  # AI-Deep修改
+            node.print_result(offset, residuals, fixed_points)  # AI-Deep修改
         node.destroy_node()
         rclpy.shutdown()
         sys.exit(0)
@@ -187,8 +215,8 @@ def main():  # AI-Deep修改
             ch = input()
             if ch.strip().lower() == 'q':
                 if len(node.poses) >= 4:
-                    offset, residuals = node.calibrate()
-                    node.print_result(offset, residuals)
+                    offset, residuals, fixed_points = node.calibrate()  # AI-Deep修改
+                    node.print_result(offset, residuals, fixed_points)  # AI-Deep修改
                 else:
                     node.get_logger().error(f'至少需要 4 组数据，当前仅 {len(node.poses)} 组')
                 break
@@ -196,8 +224,8 @@ def main():  # AI-Deep修改
     except KeyboardInterrupt:
         node.get_logger().info('')
         if len(node.poses) >= 4:
-            offset, residuals = node.calibrate()
-            node.print_result(offset, residuals)
+            offset, residuals, fixed_points = node.calibrate()  # AI-Deep修改
+            node.print_result(offset, residuals, fixed_points)  # AI-Deep修改
     finally:
         node.destroy_node()
         rclpy.shutdown()

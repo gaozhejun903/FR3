@@ -777,11 +777,6 @@ void RoboCtrlNode::handle_robot_servo_joint(
 
                 // 启动运动线程，只负责执行预计算的序列
                 servo_thread_ = std::thread([this, target_poses, request]() {
-                    auto cleanup = [&]() {
-                        is_servo_running_.store(false);
-                        RCLCPP_DEBUG(this->get_logger(), "ServoJ路径执行完毕或被中断");
-                    };
-
                     float acc     = request->acc;
                     float vel     = request->vel;
                     float cmdT    = request->cmd_time;
@@ -963,22 +958,31 @@ void RoboCtrlNode::robot_state_timer_callback() {
 void RoboCtrlNode::publish_tf_transforms(const robo_ctrl::msg::TCPPose& tcp_pose) {
     rclcpp::Time now = this->now();
 
-    // 发布世界坐标系到机器人基坐标系的变换 (0,0,0)
+    // 发布世界坐标系到机器人基坐标系的变换
+    // AI-Deep修改: Lrobot_base为世界原点, Rrobot_base取自双臂基座标定结果 (dualarm_points.py Arun SVD)
+    //   标定结果 ^{L}T_R: translation=[-0.09815, 1.05515, -0.01051]m, RPY=[0.869, -1.130, 34.878]°
+    //   数据来源: dual_calib_data/dual_arm_result.json (4组有效对, RMS=2.47mm)
     geometry_msgs::msg::TransformStamped base_transform;
     base_transform.header.stamp            = now;
     base_transform.header.frame_id         = "world";
     base_transform.child_frame_id          = this->robot_name_ + "robot_base";
     if (robot_name_ == "R") {
-        base_transform.transform.translation.x = 0.067;
-        base_transform.transform.translation.y = -0.799;
-        base_transform.transform.translation.z = 0.0;
+        // AI-Deep: 双臂基座标定 — Rrobot_base在Lrobot_base坐标系下的位姿
+        base_transform.transform.translation.x = -0.09815;
+        base_transform.transform.translation.y = 1.05515;
+        base_transform.transform.translation.z = -0.01051;
     } else {
-    base_transform.transform.translation.x = 0.0;
-    base_transform.transform.translation.y = 0.0;
-    base_transform.transform.translation.z = 0.0;
+        // AI-Deep: Lrobot_base = world原点, 作为参考坐标系
+        base_transform.transform.translation.x = 0.0;
+        base_transform.transform.translation.y = 0.0;
+        base_transform.transform.translation.z = 0.0;
     }
     tf2::Quaternion q_base;
-    q_base.setRPY(0, 0, robot_name_=="R"? 128.0 * M_PI / 180.0 : 0.0);
+    // AI-Deep: R旋转取标定结果 RPY[0.869°, -1.130°, 34.878°], L保持0
+    q_base.setRPY(
+        robot_name_ == "R" ? 0.869 * M_PI / 180.0 : 0.0,
+        robot_name_ == "R" ? -1.130 * M_PI / 180.0 : 0.0,
+        robot_name_ == "R" ? 34.878 * M_PI / 180.0 : 0.0);
     base_transform.transform.rotation.x = q_base.x();
     base_transform.transform.rotation.y = q_base.y();
     base_transform.transform.rotation.z = q_base.z();

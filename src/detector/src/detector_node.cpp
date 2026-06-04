@@ -12,13 +12,14 @@ detector_node::detector_node(const rclcpp::NodeOptions& options): Node("detector
     this->declare_parameter("num_classes", 80);
 #endif
 #ifdef USING_LW_DETR
+    // AI-Deep: 更新路径为当前用户目录 (原值 /home/phoenix/... 已废弃)
     this->declare_parameter(
         "model_path",
-        "/home/phoenix/roboarm/FairinoDualArm/src/detector/asserts/inference_model.engine"
+        "/home/mihu/FR3_again/src/detector/asserts/inference_model.engine"
     );
     this->declare_parameter(
         "plugin_path",
-        "/home/phoenix/roboarm/FairinoDualArm/src/detector/asserts/layernorm_plugin.so"
+        "/home/mihu/FR3_again/src/detector/asserts/layernorm_plugin.so"
     );
 #endif
     this->declare_parameter("confidence_threshold", 0.5);

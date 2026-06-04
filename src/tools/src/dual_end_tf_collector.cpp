@@ -15,8 +15,9 @@ DualEndTfCollector::DualEndTfCollector(const rclcpp::NodeOptions& options):
     tf_update_interval_    = this->declare_parameter<int>("tf_update_interval", 100);     // 默认100毫秒
 
     // 坐标系参数
-    rend_frame_id_ = this->declare_parameter<std::string>("rend_frame_id", "Rend");
-    lend_frame_id_ = this->declare_parameter<std::string>("lend_frame_id", "Lend");
+    // AI-Deep: 坐标系默认值改为 Rtcp/Ltcp (原值 Rend/Lend 在TF树中不存在)
+    rend_frame_id_ = this->declare_parameter<std::string>("rend_frame_id", "Rtcp");
+    lend_frame_id_ = this->declare_parameter<std::string>("lend_frame_id", "Ltcp");
     base_frame_id_ = this->declare_parameter<std::string>("base_frame_id", "world");
 
     // 分别为左臂和右臂设置基座坐标系

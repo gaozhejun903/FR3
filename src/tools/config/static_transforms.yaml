@@ -106,30 +106,34 @@ transforms:
       pitch: -0.859
       yaw: 90.740
 
-  # AI-Deep修改: 左臂TCP标定结果 (2026-05-23, 4点法), RMS=4.77mm
-  # 法兰→夹爪尖端偏移, 纯平移, 无旋转
+  # AI-Deep修改: 左臂TCP标定结果 (2026-06-04, 4点法, 6组), RMS=7.51mm
+  # 法兰→夹爪尖端偏移, 纯平移, 无旋转 (重新标定)
   - frames:
       parent: Ltcp
       child: Lgripper_tip
     translation:
-      x: -0.0399
-      y: 0.0020
-      z: 0.17692
+      x: -0.00166
+      y: 0.00182
+      z: 0.18564
     rotation:
       roll: 0.0
       pitch: 0.0
       yaw: 0.0
 
-  # AI-Deep修改: 右臂TCP标定结果 (2026-06-02, 4点法), RMS=1.98mm
-  # 法兰→夹爪尖端偏移, 纯平移, 无旋转
+  # AI-Deep修改: 右臂TCP标定结果 (2026-06-04, 4点法, 7组), RMS=10.7mm
+  # 法兰→夹爪尖端偏移, 纯平移, 无旋转 (夹爪调整后重新标定)
   - frames:
       parent: Rtcp
       child: Rgripper_tip
     translation:
-      x: -0.00531
-      y: -0.01977
-      z: 0.18626
+      x: 0.00389
+      y: 0.00306
+      z: 0.19254
     rotation:
       roll: 0.0
       pitch: 0.0
       yaw: 0.0
+
+  # AI-Deep: Lrobot_base→Rrobot_base 已移至 robo_ctrl_node.cpp publish_tf_transforms() 直接发布
+  #   world→Rrobot_base = 标定结果 ^{L}T_R (因 L = world原点)
+  #   不再通过static_tf发布, 避免与robo_ctrl动态TF冲突

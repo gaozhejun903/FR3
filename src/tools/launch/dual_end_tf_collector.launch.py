@@ -34,16 +34,17 @@ def generate_launch_description():
         description='TF update interval in milliseconds'
     )
     
+    # AI-Deep: frame名改为Rtcp/Ltcp (原值 Rend/Lend 在TF树中不存在)
     rend_frame_id_arg = DeclareLaunchArgument(
         'rend_frame_id',
-        default_value='Rend',
-        description='Right end frame ID'
+        default_value='Rtcp',
+        description='Right arm flange frame ID'
     )
-    
+
     lend_frame_id_arg = DeclareLaunchArgument(
         'lend_frame_id',
-        default_value='Lend',
-        description='Left end frame ID'
+        default_value='Ltcp',
+        description='Left arm flange frame ID'
     )
     
     base_frame_id_arg = DeclareLaunchArgument(

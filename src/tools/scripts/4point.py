@@ -4,7 +4,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 # ✅ 替换为你的实际路径
-pose_dir = "/home/phoenix/roboarm/FairinoDualArm/tmp/eye_hand_calibration_dataL/poses"
+# AI-Deep: 更新默认路径 (原值 /home/phoenix/... 已废弃，请改用 4point_interactive.py)
+pose_dir = "/tmp/eye_hand_calibration_data/poses"
 
 def pose_to_rt(pose):
     quat = pose["orientation"]

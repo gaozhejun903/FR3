@@ -1,0 +1,33 @@
+{
+  "L_TR": {
+    "translation_m": [
+      -0.09815039758026806,
+      1.0551541772363298,
+      -0.010506428216868369
+    ],
+    "euler_xyz_deg": [
+      0.8686337219301101,
+      -1.1296576735007988,
+      34.877927618588316
+    ]
+  },
+  "rms_mm": 2.465231423825371,
+  "per_pair_error_mm": [
+    2.6585394016757724,
+    1.8754381594487208,
+    3.2783506546006214,
+    1.7253349927955912
+  ],
+  "num_pairs": 4,
+  "pairs_used": [
+    "pair_0002",
+    "pair_0003",
+    "pair_0004",
+    "pair_0005"
+  ],
+  "pairs_excluded": [
+    "pair_0000",
+    "pair_0001"
+  ],
+  "note": "pair_0000 and pair_0001 had Z-coordinate anomalies (likely didn't touch calibration point properly)"
+}
