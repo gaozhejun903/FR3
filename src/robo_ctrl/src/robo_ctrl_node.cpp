@@ -1241,6 +1241,12 @@ void RoboCtrlNode::robot_state_thread_func() {
                     joint_state_msg->position[4] = static_cast<double>(joint_pos.jPos[4]) * M_PI / 180.0;
                     joint_state_msg->position[5] = static_cast<double>(joint_pos.jPos[5]) * M_PI / 180.0;
                     has_data                     = true;
+
+                    // AI-Deep: 成功查询后重置重连计数器
+                    if (reconnect_attempts_ > 0) {
+                        reconnect_attempts_ = 0;
+                        RCLCPP_INFO(this->get_logger(), "机器人通信恢复正常");
+                    }
                 } else {
                     auto current_time = thread_clock.now();
                     if ((current_time - last_warn_time).seconds() > 5.0) {
@@ -1250,8 +1256,6 @@ void RoboCtrlNode::robot_state_thread_func() {
 
                     // 检测错误码-2，这通常表示通信断开或者超时
                     if (ret == -2) {
-                        RCLCPP_ERROR(this->get_logger(), "检测到通信断开(错误码: -2)，尝试重新连接机器人...");
-
                         // 先关闭当前连接
                         if (is_connected_) {
                             robot_->CloseRPC();
@@ -1259,19 +1263,32 @@ void RoboCtrlNode::robot_state_thread_func() {
                             RCLCPP_INFO(this->get_logger(), "已断开当前连接");
                         }
 
-                        // 稍微延时，给机器人一些恢复时间
-                        std::this_thread::sleep_for(std::chrono::seconds(1));
+                        // 指数退避重连: 1s → 2s → 4s → 8s → ... 最大 30s
+                        int backoff_sec = std::min(1 << reconnect_attempts_, 30);
+                        RCLCPP_ERROR(
+                            this->get_logger(),
+                            "检测到通信断开(错误码: -2)，第 %d 次重连尝试，等待 %d 秒...",
+                            reconnect_attempts_ + 1,
+                            backoff_sec
+                        );
+
+                        std::this_thread::sleep_for(std::chrono::seconds(backoff_sec));
 
                         // 尝试重新连接
                         try {
                             int connect_ret = robot_->RPC(robot_ip_.c_str());
                             if (connect_ret == 0) {
                                 is_connected_ = true;
+                                reconnect_attempts_ = 0;  // 重置重连计数
                                 RCLCPP_INFO(this->get_logger(), "成功重新连接到机器人");
+                                // 连接后等待 SDK 内部线程稳定
+                                std::this_thread::sleep_for(std::chrono::milliseconds(500));
                             } else {
+                                reconnect_attempts_++;
                                 RCLCPP_ERROR(this->get_logger(), "重新连接机器人失败，错误码: %d", connect_ret);
                             }
                         } catch (const std::exception& e) {
+                            reconnect_attempts_++;
                             RCLCPP_ERROR(this->get_logger(), "重新连接机器人时发生异常: %s", e.what());
                         }
 

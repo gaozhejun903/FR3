@@ -134,6 +134,36 @@ transforms:
       pitch: 0.0
       yaw: 0.0
 
-  # AI-Deep: Lrobot_base→Rrobot_base 已移至 robo_ctrl_node.cpp publish_tf_transforms() 直接发布
-  #   world→Rrobot_base = 标定结果 ^{L}T_R (因 L = world原点)
-  #   不再通过static_tf发布, 避免与robo_ctrl动态TF冲突
+  # ═════════════════════════════════════════════════════════════════
+  # AI-Deep: world→robot_base 静态TF (基础参考系)
+  # 在机器人未连接时提供 world 参考系回退值，robo_ctrl 连接后会覆盖为实际值
+  # Lrobot_base = world原点 (FR3 base坐标系)
+  # Rrobot_base = 双臂标定结果 ^{L}T_R (dual_arm_result.json: 4组, RMS=2.47mm)
+  # ═════════════════════════════════════════════════════════════════
+  - frames:
+      parent: world
+      child: Lrobot_base
+    translation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    rotation:
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+
+  - frames:
+      parent: world
+      child: Rrobot_base
+    translation:
+      x: -0.09815
+      y: 1.05515
+      z: -0.01051
+    rotation:
+      roll: 0.869
+      pitch: -1.130
+      yaw: 34.878
+
+  # AI-Deep 注: world→robot_base 静态TF发布后，robo_ctrl_node 仍会发布动态TF。
+  # TF2 使用最新发布的值 — 机器人连接后动态值自动覆盖静态回退值。
+  # 此回退值使 fake_gripper_tf_publisher 在机器人未连接时也能正常工作。

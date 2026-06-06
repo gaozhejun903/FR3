@@ -25,7 +25,11 @@
       "Bash(wait)",
       "Bash(python3 -c ' *)",
       "Bash(colcon build *)",
-      "Bash(ros2 node *)"
+      "Bash(ros2 node *)",
+      "Bash(ls -lt /root/.ros/log/ | head -5)",
+      "Read(//root/.ros/log/**)",
+      "Bash(ip addr *)",
+      "Bash(v4l2-ctl --list-devices)"
     ],
     "additionalDirectories": [
       "/tmp",

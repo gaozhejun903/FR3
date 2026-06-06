@@ -44,13 +44,13 @@ def generate_launch_description():
     # ═══════════════════════════════════════════════════════════════
     R_gripper_port_arg = DeclareLaunchArgument(
         'R_gripper_port',
-        default_value='/dev/serial/by-path/pci-0000:05:00.4-usb-0:2.2.1:1.0-port0',
-        description='右夹爪串口 (by-path)'
+        default_value='/dev/serial/by-path/pci-0000:05:00.4-usb-0:1.2:1.0-port0',
+        description='右夹爪串口 (by-path) — USB拓扑变更后更新 2026-06-06'
     )
     L_gripper_port_arg = DeclareLaunchArgument(
         'L_gripper_port',
-        default_value='/dev/serial/by-path/pci-0000:05:00.4-usb-0:2.2.4:1.0-port0',
-        description='左夹爪串口 (by-path)'
+        default_value='/dev/serial/by-path/pci-0000:05:00.4-usb-0:1.4:1.0-port0',
+        description='左夹爪串口 (by-path) — USB拓扑变更后更新 2026-06-06'
     )
 
     confidence_threshold_arg = DeclareLaunchArgument(

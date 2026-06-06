@@ -126,6 +126,7 @@ private:
     std::atomic<bool> thread_running_; // 线程运行标志
     std::mutex robot_mutex_;           // 机器人对象访问互斥锁
     std::mutex servo_thread_mutex_;
+    int reconnect_attempts_ = 0;       // AI-Deep: 重连指数退避计数器
 };
 
 } // namespace robo_ctrl

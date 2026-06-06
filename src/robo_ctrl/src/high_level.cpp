@@ -428,7 +428,7 @@ void plan_and_execute_node::visualize_trajectory(const std::vector<geometry_msgs
 
     // 创建线条标记
     visualization_msgs::msg::Marker line_marker;
-    line_marker.header.frame_id = "robot_base"; // 假设基座标系
+    line_marker.header.frame_id = robot_name + "robot_base"; // 使用带前缀的基座标系
     line_marker.header.stamp    = this->now();
     line_marker.ns              = "trajectory_line";
     line_marker.id              = 0;
@@ -456,7 +456,7 @@ void plan_and_execute_node::visualize_trajectory(const std::vector<geometry_msgs
     // 创建轨迹点标记
     for (size_t i = 0; i < trajectory.size(); i++) {
         visualization_msgs::msg::Marker point_marker;
-        point_marker.header.frame_id = "robot_base";
+        point_marker.header.frame_id = robot_name + "robot_base";
         point_marker.header.stamp    = this->now();
         point_marker.ns              = "trajectory_points";
         point_marker.id              = i + 1;
@@ -795,7 +795,7 @@ void plan_and_execute_node::robot_state_callback(robo_ctrl::msg::RobotState::Sha
         }
 
         std::vector<geometry_msgs::msg::Pose> poses_in_base;
-        if (transformPosesFromLfakeGripper(poses_in_gripper, poses_in_base, "robot_base")) {
+        if (transformPosesFromLfakeGripper(poses_in_gripper, poses_in_base, robot_name + "robot_base")) {
             RCLCPP_INFO(this->get_logger(), "位姿向量变换示例成功: 变换了%zu个位姿", poses_in_base.size());
         }
 
@@ -1003,7 +1003,7 @@ bool plan_and_execute_node::updateTransformCache(const std::string& target_frame
         RCLCPP_WARN(
             this->get_logger(),
             "无法获取从%s到%s的变换: %s",
-            robot_name.c_str(),
+            (robot_name + "fake_gripper_frame").c_str(),
             target_frame.c_str(),
             ex.what()
         );

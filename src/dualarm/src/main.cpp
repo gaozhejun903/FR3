@@ -4,8 +4,9 @@
 #include <future>
 #include "main.h"
 
+// AI-Deep: 左右爪分节点后,各自独立RS485总线,slave_id均为9
 #define GRIPPER_ID_L    9
-#define GRIPPER_ID_R    10
+#define GRIPPER_ID_R    9
 #define GRIPPER_DISABLE 0
 #define GRIPPER_ENABLE  1
 #define GRIPPER_SET     2
