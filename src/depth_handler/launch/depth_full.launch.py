@@ -26,6 +26,26 @@ def generate_launch_description():
             )
 
     # ═══════════════════════════════════════════════════════════════
+    # AI-Deep: 清理残留进程，防止占用机械臂SDK连接
+    # 如果上次启动未正常退出 (kill -9 或崩溃)，robo_ctrl_node 仍持有
+    # Fairino RPC 连接，导致新进程被控制器拒绝 (Connection reset by peer)
+    # ═══════════════════════════════════════════════════════════════
+    STALE_PROCS = [
+        'robo_ctrl_node',
+        'high_level_node',
+        'epg50_gripper_node',
+        'fake_gripper_tf_publisher_node',
+        'static_tf_publisher_node',
+        'detector_node_exe',
+        'depth_processor_node',
+        'camera_info_interceptor_node',
+    ]
+    for proc in STALE_PROCS:
+        subprocess.run(['pkill', '-9', '-f', proc], capture_output=True)
+    # 等待内核回收资源，确保 TCP 连接完全释放
+    subprocess.run(['sleep', '1.5'], capture_output=True)
+
+    # ═══════════════════════════════════════════════════════════════
     # 左臂参数 (192.168.58.2)
     # ═══════════════════════════════════════════════════════════════
     L_ip_arg = DeclareLaunchArgument(

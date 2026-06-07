@@ -40,7 +40,9 @@
       "Read(//etc/udev/**)",
       "Read(//etc/udev/rules.d/**)",
       "Bash(timeout 10 bash -c 'source /home/mihu/FR3_again/install/setup.bash && ros2 topic echo /L/robot_state --once')",
-      "Bash(ros2 param *)"
+      "Bash(ros2 param *)",
+      "Bash(timeout 8 bash -c ' *)",
+      "Bash(git checkout *)"
     ],
     "additionalDirectories": [
       "/tmp",
