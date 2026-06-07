@@ -158,19 +158,33 @@ void RoboCtrlNode::handle_robot_move(
             ExaxisPos exaxis_pos;
             memset(&exaxis_pos, 0, sizeof(ExaxisPos));
 
-            // 调用MoveJ函数，根据头文件定义提供所有必需的参数
+            // 构造 desc_pos：用请求中的 cartesian_pose（与 joint_pos 的 FK 一致）
+            // 避免全零位姿与关节目标冲突导致 154
+            DescPose desc_pos;
+            memset(&desc_pos, 0, sizeof(DescPose));
+            bool has_cartesian = (request->cartesian_pose.size() >= 6);
+            if (has_cartesian) {
+                desc_pos.tran.x = static_cast<float>(request->cartesian_pose[0]);
+                desc_pos.tran.y = static_cast<float>(request->cartesian_pose[1]);
+                desc_pos.tran.z = static_cast<float>(request->cartesian_pose[2]);
+                desc_pos.rpy.rx = static_cast<float>(request->cartesian_pose[3]);
+                desc_pos.rpy.ry = static_cast<float>(request->cartesian_pose[4]);
+                desc_pos.rpy.rz = static_cast<float>(request->cartesian_pose[5]);
+            }
+
+            // 调用MoveJ函数
             ret = robot_->MoveJ(
                 &joint_pos,                                // 关节位置
-                &offset_pos,                               // 笛卡尔位置
+                has_cartesian ? &desc_pos : nullptr,       // 笛卡尔位姿（与关节一致）
                 0,                                         // 工具号
                 0,                                         // 工件号
                 static_cast<float>(request->velocity),     // 速度
                 static_cast<float>(request->acceleration), // 加速度
                 100.0f,                                    // 速度缩放因子，设为100%
-                &exaxis_pos,                               // 外部轴位置，不需要，memset 0
+                &exaxis_pos,                               // 外部轴位置
                 blendT,                                    // 平滑时间，-1表示阻塞运动
                 offsetflag,                                // 偏移标志，0表示无偏移
-                &offset_pos                                // 偏移位置，不需要，memset 0
+                &offset_pos                                // 偏移位置
             );
         } else if (request->move_type == 1) {
             // 笛卡尔移动

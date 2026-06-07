@@ -223,7 +223,8 @@ public:
 
         auto future = client->async_send_request(request);
 
-        if (rclcpp::spin_until_future_complete(node, future, timeout) == rclcpp::FutureReturnCode::SUCCESS) {
+        // AI-Deep: 节点可能已在 executor 中运行，用 wait_for 替代 spin_until_future_complete
+        if (future.wait_for(timeout) == std::future_status::ready) {
             auto response = future.get();
             if (response->success) {
                 RCLCPP_INFO(node->get_logger(), "Service '%s' succeeded: %s",

@@ -122,6 +122,13 @@ RobotMain::RobotMain(const rclcpp::NodeOptions& options): Node("robot_main", opt
     this->declare_parameter("cola_height", 91);
     this->declare_parameter("cestbon_height", 91);
     this->declare_parameter("robot_speed", 0.5);
+    this->declare_parameter("ball_R_joint_init_pose", std::vector<double> { 66.251, -123.403, 126.849, -184.040, -97.664, 90.0 });
+    this->declare_parameter("ball_L_joint_init_pose", std::vector<double> { -0.0, -66.994, -51.016, -87.069, 81.874, -90.0 });
+    this->declare_parameter("ball_L_1_joint_pose", std::vector<double> { -18.158, -127.475, -80.388, 28.213, 115.327, -90.0 });
+    this->declare_parameter("ball_L_2_joint_pose", std::vector<double> { -29.826, -136.002, -50.200, -3.902, 115.484, -89.971 });
+    this->declare_parameter("ball_R_1_joint_pose", std::vector<double> { 103.339, -23.279, 22.041, -180.788, -126.890, 90.0 });
+    this->declare_parameter("ball_R_2_joint_pose", std::vector<double> { 93.138, -52.470, 69.132, -190.739, -123.491, 89.984 });
+    this->declare_parameter("ball_R_per_1_joint_pose", std::vector<double> { 108.784, -48.573, 65.323, -194.233, -129.820, 87.784 });
     init_tcp_pose_vec_ = this->get_parameter("init_tcp_pose").as_double_array();
     desk_height_       = this->get_parameter("desk_height").as_int();
     cola_height_       = this->get_parameter("cola_height").as_int();
@@ -2448,7 +2455,7 @@ int L_fix(
     fix_request->velocity = 90;
 
     auto fix_future = node->L_robot_move_cart_client_->async_send_request(fix_request);
-    if (rclcpp::spin_until_future_complete(node, fix_future) != rclcpp::FutureReturnCode::SUCCESS) {
+    if (fix_future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
         RCLCPP_ERROR(node->get_logger(), "Failed to call service robot_move_cart for fixing orientation");
         return 1;
     }

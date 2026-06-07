@@ -136,29 +136,68 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(wait_time_ms));
     RCLCPP_INFO(node->get_logger(), "Robot orientation fixed successfully");
 
-    // 更新目标位置，Z 取桌面高度 + 可乐高度
+    // ═══════════════════════════════════════════════════════════════
+    // 用 TCP 标定结果计算夹爪尖端增量 (替代硬编码 -132, +45)
+    //
+    // 标定数据 (static_transforms.yaml 2026-06-04):
+    //   Ltcp→Lgripper_tip: [-0.00166, 0.00182, 0.18564] m
+    //
+    // 抓取姿态 rx=-90°, ry=0°, rz=-90° 下:
+    //   R = Rz(-90°)*Rx(-90°) = [[0,0,1],[-1,0,0],[0,-1,0]]
+    //   tcp_offset_base = R * [-1.66, 1.82, 185.64]^T
+    //                   = [185.64, 1.66, -1.82] mm
+    // ═══════════════════════════════════════════════════════════════
+    const double TCP_OFFSET_TCP_X = -1.66;   // mm
+    const double TCP_OFFSET_TCP_Y =  1.82;
+    const double TCP_OFFSET_TCP_Z = 185.64;
+
+    // R * [tx, ty, tz]^T = [tz, -tx, -ty]  (at grasp orientation)
+    const double TIP_BASE_DX =  TCP_OFFSET_TCP_Z;   // +185.64 mm
+    const double TIP_BASE_DY = -TCP_OFFSET_TCP_X;   //   +1.66 mm
+    const double TIP_BASE_DZ = -TCP_OFFSET_TCP_Y;   //   -1.82 mm
+
+    double flange_x = 0, flange_y = 0, flange_z = 0;
     {
         std::lock_guard<std::mutex> lock(node->L_robot_state_mutex_);
         if (node->L_robot_state_) {
-            target_tcp_position[2] =
-                node->desk_height_ + node->cola_height_ - node->L_robot_state_->tcp_pose.z;
+            flange_x = node->L_robot_state_->tcp_pose.x;
+            flange_y = node->L_robot_state_->tcp_pose.y;
+            flange_z = node->L_robot_state_->tcp_pose.z;
         }
     }
+
+    // 夹爪尖端当前位置
+    double tip_x = flange_x + TIP_BASE_DX;
+    double tip_y = flange_y + TIP_BASE_DY;
+    double tip_z = flange_z + TIP_BASE_DZ;
+
+    // 目标: 夹爪尖端→可乐中心
+    double desired_x = cola_position[0] * 1000.0;              // m→mm
+    double desired_y = cola_position[1] * 1000.0;
+    double desired_z = node->desk_height_ + node->cola_height_; // 桌面+可乐半高
+
+    // 法兰增量 = 目标尖端位置 - 当前尖端位置
+    target_tcp_position[0] = desired_x - tip_x;
+    target_tcp_position[1] = desired_y - tip_y;
+    target_tcp_position[2] = desired_z - tip_z;
+
     RCLCPP_INFO(node->get_logger(),
-                "Corrected Target TCP position: [%.3f, %.3f, %.3f]",
-                target_tcp_position[0], target_tcp_position[1], target_tcp_position[2]);
+        "法兰:[%.1f,%.1f,%.1f] 尖端:[%.1f,%.1f,%.1f] → 目标:[%.1f,%.1f,%.1f] 增量:[%.1f,%.1f,%.1f]",
+        flange_x, flange_y, flange_z,
+        tip_x, tip_y, tip_z,
+        desired_x, desired_y, desired_z,
+        target_tcp_position[0], target_tcp_position[1], target_tcp_position[2]);
 
     // ══════════════════════════════════════════════════════════════════════
     // Step 5: 左臂移动到可乐位置
     // ══════════════════════════════════════════════════════════════════════
     RCLCPP_INFO(node->get_logger(), "Step 5: 移动到可乐位置");
 
-    // AI-Deep: 用 RobotAct 直线规划增量移动
-    //   -132/+45 为相机→TCP的经验偏移修正(物体中心→夹爪尖端)
+    // 增量已在 Step 4.5 中通过 TCP 标定精确计算
     auto act_request             = std::make_shared<robo_ctrl::srv::RobotAct::Request>();
     act_request->command_type    = 0; // ServoMoveStart
-    act_request->tcp_pose.x      = target_tcp_position[0] - 132;
-    act_request->tcp_pose.y      = target_tcp_position[1] + 45;
+    act_request->tcp_pose.x      = target_tcp_position[0];
+    act_request->tcp_pose.y      = target_tcp_position[1];
     act_request->tcp_pose.z      = target_tcp_position[2];
     act_request->tcp_pose.rx     = 0.0;
     act_request->tcp_pose.ry     = 0.0;
@@ -207,7 +246,7 @@ int main(int argc, char** argv) {
     exit_request->tcp_pose.ry   = 0.0;
     exit_request->tcp_pose.rz   = 0.0;
     exit_request->acceleration  = 100;
-    exit_request->velocity      = 30;
+    exit_request->velocity      = 10;
     exit_request->config        = -1;
     exit_request->blend_time    = 0.0;
     exit_request->use_increment = true;
@@ -237,7 +276,7 @@ int main(int argc, char** argv) {
     look_at_table_request->tcp_pose.ry   = node->init_tcp_pose_vec_[4];
     look_at_table_request->tcp_pose.rz   = node->init_tcp_pose_vec_[5];
     look_at_table_request->acceleration  = 100;
-    look_at_table_request->velocity      = 100;
+    look_at_table_request->velocity      = 10;
     look_at_table_request->config        = -1;
     look_at_table_request->blend_time    = 0.0;
     look_at_table_request->use_increment = false;

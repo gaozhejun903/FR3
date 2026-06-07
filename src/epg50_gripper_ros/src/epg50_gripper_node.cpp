@@ -95,6 +95,7 @@ private:
     bool stop_thread_ = false;
     double status_update_rate_; // 状态更新频率，单位Hz
     double command_timeout_;    // 命令超时时间，单位秒
+    bool status_fail_warned_ = false;  // 状态获取失败时仅警告一次，避免反复刷屏
 
     // 添加用于同步的互斥锁和条件变量
     std::mutex command_mutex_;           // 用于保护命令执行
@@ -258,7 +259,7 @@ private:
         } else {
             response->success       = false;
             response->error_message = "读取状态失败";
-            RCLCPP_ERROR(this->get_logger(), "读取状态失败");
+            RCLCPP_WARN(this->get_logger(), "读取状态失败 — 夹爪可能未连接");
         }
 
         {
@@ -320,6 +321,9 @@ private:
                     command_cv_.notify_one();
 
                     if (!status.empty() && status.size() >= 8) { // 确保我们有足够的状态元素（8个）
+                        // 状态获取成功，重置失败警告标志
+                        status_fail_warned_ = false;
+
                         // 创建并填充状态消息
                         auto msg      = std::make_unique<epg50_gripper_ros::msg::GripperStatus>();
                         msg->slave_id = gripper_->get_slave_id();
@@ -375,7 +379,13 @@ private:
                             );
                         }
                     } else {
-                        RCLCPP_WARN(this->get_logger(), "获取夹爪状态失败");
+                        // 仅首次失败时报警告，后续静默（避免反复刷屏）
+                        if (!status_fail_warned_) {
+                            RCLCPP_WARN(this->get_logger(), "获取夹爪状态失败 — 检查串口连接");
+                            status_fail_warned_ = true;
+                        } else {
+                            RCLCPP_DEBUG(this->get_logger(), "获取夹爪状态失败 (静默)");
+                        }
                     }
                 } else {
                     // 如果因为命令执行而不能进行状态查询，则跳过本次查询
