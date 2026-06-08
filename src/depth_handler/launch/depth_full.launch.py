@@ -39,6 +39,8 @@ def generate_launch_description():
         'detector_node_exe',
         'depth_processor_node',
         'camera_info_interceptor_node',
+        'joint_state_merger',
+        'static_transform_publisher',
     ]
     for proc in STALE_PROCS:
         subprocess.run(['pkill', '-9', '-f', proc], capture_output=True)
@@ -74,7 +76,7 @@ def generate_launch_description():
     )
 
     confidence_threshold_arg = DeclareLaunchArgument(
-        'confidence_threshold', default_value='0.5',
+        'confidence_threshold', default_value='0.4',
         description='目标检测置信度阈值'
     )
     model_path_arg = DeclareLaunchArgument(
@@ -157,6 +159,7 @@ def generate_launch_description():
         name='L_gripper_node',
         parameters=[{
             'port': LaunchConfiguration('L_gripper_port'),
+            'robot_name': 'L',
         }],
         output='screen',
     )
@@ -170,6 +173,7 @@ def generate_launch_description():
         name='R_gripper_node',
         parameters=[{
             'port': LaunchConfiguration('R_gripper_port'),
+            'robot_name': 'R',
         }],
         output='screen',
     )
@@ -361,7 +365,7 @@ lg_ok = True
 # 先检查串口设备是否存在
 check_serial_port("/dev/serial/by-path/pci-0000:05:00.4-usb-0:1.4:1.0-port0") or (lg_ok := False)
 check_node("L_gripper_node") or (lg_ok := False)
-check_topic("/L_gripper_node/status_stream") or (lg_ok := False)
+check_topic("/L/gripper/status_stream") or (lg_ok := False)
 if lg_ok:
     print(f"  ==> 左夹爪: [SUCCESS]")
     pass_count += 1
@@ -379,7 +383,7 @@ section("右夹爪")
 rg_ok = True
 check_serial_port("/dev/serial/by-path/pci-0000:05:00.4-usb-0:1.2:1.0-port0") or (rg_ok := False)
 check_node("R_gripper_node") or (rg_ok := False)
-check_topic("/R_gripper_node/status_stream") or (rg_ok := False)
+check_topic("/R/gripper/status_stream") or (rg_ok := False)
 if rg_ok:
     print(f"  ==> 右夹爪: [SUCCESS]")
     pass_count += 1

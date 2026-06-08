@@ -19,6 +19,7 @@ public:
         this->declare_parameter("default_slave_id", 0x09);   // 添加默认从站ID参数
         this->declare_parameter("status_update_rate", 10.0); // 状态更新频率，单位Hz
         this->declare_parameter("command_timeout", 1.0);     // 命令超时时间，单位秒
+        this->declare_parameter("robot_name", "gripper");    // 机器人名称，用于构造 topic/service 命名空间
 
         // 获取参数
         std::string port         = this->get_parameter("port").as_string();
@@ -26,40 +27,44 @@ public:
         uint8_t default_slave_id = this->get_parameter("default_slave_id").as_int();
         status_update_rate_      = this->get_parameter("status_update_rate").as_double();
         command_timeout_         = this->get_parameter("command_timeout").as_double();
+        std::string robot_name   = this->get_parameter("robot_name").as_string();
+
+        // 构造命名空间前缀，与 robo_ctrl 保持一致: /{robot_name}/gripper/
+        std::string ns = "/" + robot_name + "/gripper";
 
         RCLCPP_INFO(
             this->get_logger(),
-            "初始化EPG50夹爪, 端口: %s, 默认从站ID: 0x%02X, 状态更新频率: %.1f Hz, 命令超时: %.1f s",
+            "初始化EPG50夹爪, 端口: %s, 默认从站ID: 0x%02X, 状态更新频率: %.1f Hz, 命令超时: %.1f s, 命名空间: %s",
             port.c_str(),
             default_slave_id,
             status_update_rate_,
-            command_timeout_
+            command_timeout_,
+            ns.c_str()
         );
 
         try {
             gripper_        = std::make_unique<EPG50_Serial>(port, default_slave_id);
             gripper_->debug = debug;
 
-            // 创建服务
-            // AI-Deep: 改用相对命名，避免多节点服务名冲突
+            // 创建服务 — 使用参数化命名空间避免多节点冲突
             command_service_ = this->create_service<epg50_gripper_ros::srv::GripperCommand>(
-                "~/command",
+                ns + "/command",
                 std::bind(&EPG50GripperNode::handle_command, this, std::placeholders::_1, std::placeholders::_2)
             );
 
             status_service_ = this->create_service<epg50_gripper_ros::srv::GripperStatus>(
-                "~/status",
+                ns + "/status",
                 std::bind(&EPG50GripperNode::handle_status, this, std::placeholders::_1, std::placeholders::_2)
             );
 
             rename_service_ = this->create_service<epg50_gripper_ros::srv::RenameGripper>(
-                "~/rename",
+                ns + "/rename",
                 std::bind(&EPG50GripperNode::handle_rename, this, std::placeholders::_1, std::placeholders::_2)
             );
 
             // 创建状态发布器
             status_publisher_ =
-                this->create_publisher<epg50_gripper_ros::msg::GripperStatus>("~/status_stream", 10);
+                this->create_publisher<epg50_gripper_ros::msg::GripperStatus>(ns + "/status_stream", 10);
 
             // 启动状态更新线程
             status_thread_ = std::thread(&EPG50GripperNode::status_update_thread, this);

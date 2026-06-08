@@ -122,7 +122,20 @@ private:
             // 发布变换
             tf_broadcaster_->sendTransform(fake_trans);
         } catch (const tf2::TransformException& ex) {
-            RCLCPP_WARN(this->get_logger(), "TF Error: %s", ex.what());
+            // AI-Deep: 相同错误只打印一次，避免 50Hz 刷屏
+            std::string err_msg = ex.what();
+            if (err_msg != last_tf_error_) {
+                RCLCPP_WARN(this->get_logger(), "TF Error: %s", err_msg.c_str());
+                if (last_tf_error_.empty()) {
+                    RCLCPP_INFO(this->get_logger(),
+                        "后续相同错误将不再重复显示，等待TF就绪...");
+                } else {
+                    RCLCPP_INFO(this->get_logger(),
+                        "TF错误已变化 (之前: %s)，新错误仅显示一次",
+                        last_tf_error_.c_str());
+                }
+                last_tf_error_ = err_msg;
+            }
         }
     }
 
@@ -130,6 +143,7 @@ private:
     std::string base_frame_;
     std::string fake_frame_;
     std::string reference_frame_;
+    std::string last_tf_error_;  // AI-Deep: 记录上一条TF错误，相同错误不重复打印
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
