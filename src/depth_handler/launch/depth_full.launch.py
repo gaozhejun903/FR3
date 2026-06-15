@@ -233,7 +233,14 @@ def generate_launch_description():
     )
 
     # ═══════════════════════════════════════════════════════════════
-    # AI-Deep: 启动后系统状态检查 (15秒延迟，等待所有节点就绪)
+    # AI-Deep: 启动后系统状态检查
+    #
+    # 改进说明 (2026-06-15):
+    #   1. subprocess 继承 ROS 2 环境变量 (os.environ.copy())
+    #   2. 每次 check 都重新查询 ros2 node/topic list (不再缓存一次性快照)
+    #   3. check_node / check_topic / check_topic_data 均带重试
+    #   4. 失败时打印当前节点列表和 stderr 帮助排查
+    #   5. 总超时约 60 秒 (15s 初始 + 3轮*2s 重试 + topic data 超时)
     # ═══════════════════════════════════════════════════════════════
     status_checker_script = '''
 import subprocess, sys, time, os
@@ -242,34 +249,82 @@ OK    = "[  OK  ]"
 FAIL  = "[ FAIL ]"
 WARN  = "[ WARN ]"
 
-# 等 15 秒让相机 (connection_delay=10) 和机械臂有足够时间初始化
+# ═══════════════════════════════════════════════════════════════
+# 初始等待: 相机 connection_delay=10s + 机械臂TCP握手 + 模型加载
+# ═══════════════════════════════════════════════════════════════
 time.sleep(15)
 
-def run(cmd, timeout=10):
+# 继承父进程的完整环境变量，确保 ros2 命令能找到正确的 DDS / domain
+_ROS_ENV = os.environ.copy()
+
+def _ros_cmd(cmd, timeout=8):
+    """执行 ros2 命令，返回 (stdout, stderr, ok)"""
     try:
-        return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout).stdout
-    except:
-        return ""
+        r = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True,
+            timeout=timeout, env=_ROS_ENV
+        )
+        return r.stdout, r.stderr, r.returncode == 0
+    except subprocess.TimeoutExpired:
+        return "", "timeout", False
+    except Exception as e:
+        return "", str(e), False
 
-node_list = run("ros2 node list")
-topic_list = run("ros2 topic list")
+def _get_nodes():
+    """返回当前所有节点名的 set (每次调用都重新查询)"""
+    out, err, ok = _ros_cmd("ros2 node list 2>&1")
+    if not ok:
+        print(f"  {WARN}  ros2 node list 失败: {err.strip()[:120]}")
+        return set()
+    return {n.strip() for n in out.strip().split("\\n") if n.strip()}
 
-def check_node(name):
-    if name in node_list:
-        print(f"  {OK}  node : {name}")
-        return True
+def _get_topics():
+    """返回当前所有 topic 名的 set (每次调用都重新查询)"""
+    out, err, ok = _ros_cmd("ros2 topic list 2>&1")
+    if not ok:
+        print(f"  {WARN}  ros2 topic list 失败: {err.strip()[:120]}")
+        return set()
+    return {t.strip() for t in out.strip().split("\\n") if t.strip()}
+
+def check_node(name, retries=3, delay=2.0):
+    """
+    检查节点是否在线。失败时重新 ros2 node list 并重试。
+    retries=0 表示只查一次不重试 (用于夹爪失败后的二次确认)
+    """
+    for attempt in range(1, max(retries, 1) + 1):
+        nodes = _get_nodes()
+        if name in nodes:
+            msg = f"  {OK}  node : {name}"
+            if attempt > 1:
+                msg += f" (第{attempt}次重试成功)"
+            print(msg)
+            return True
+        if attempt < retries:
+            print(f"  ...  node {name} 未出现，{delay:.0f}s 后刷新重试 ({attempt}/{retries})")
+            time.sleep(delay)
+    # 最终失败 — 打印当前节点列表方便定位
+    nodes = _get_nodes()
+    print(f"  {FAIL}  node : {name}  <-- 未找到!")
+    if nodes:
+        print(f"         | 当前在线节点({len(nodes)}): {', '.join(sorted(nodes)[:25])}")
     else:
-        print(f"  {FAIL}  node : {name}  <-- 未找到!")
-        return False
+        print(f"         | ros2 node list 返回为空! 检查 ROS_DOMAIN_ID / 网络 / 是否 source 了 setup.bash")
+    return False
 
-def check_topic(name):
-    """检查 topic 是否存在 (仅检查是否注册，不检查数据)"""
-    if name in topic_list:
-        print(f"  {OK}  topic: {name}")
-        return True
-    else:
-        print(f"  {FAIL}  topic: {name}  <-- 未找到!")
-        return False
+def check_topic(name, retries=2, delay=2.0):
+    """检查 topic 是否已注册 (仅检查注册，不检查数据)"""
+    for attempt in range(1, max(retries, 1) + 1):
+        topics = _get_topics()
+        if name in topics:
+            msg = f"  {OK}  topic: {name}"
+            if attempt > 1:
+                msg += f" (第{attempt}次重试成功)"
+            print(msg)
+            return True
+        if attempt < retries:
+            time.sleep(delay)
+    print(f"  {FAIL}  topic: {name}  <-- 未找到!")
+    return False
 
 def check_serial_port(port_path):
     """检查串口设备文件是否存在"""
@@ -283,38 +338,50 @@ def check_serial_port(port_path):
 def get_gripper_node_log(name):
     """如果夹爪节点未启动，抓取其最近的错误日志"""
     try:
-        # 搜索 rosout 或 journalctl 中的相关日志
         result = subprocess.run(
-            f"ros2 topic echo --once /rosout 2>/dev/null | grep -i -A2 'gripper\|epg50\|serial\|tty' | tail -20",
-            shell=True, capture_output=True, text=True, timeout=5
+            f"ros2 topic echo --once /rosout 2>/dev/null | grep -i -A2 'gripper\\|epg50\\|serial\\|tty' | tail -20",
+            shell=True, capture_output=True, text=True, timeout=5, env=_ROS_ENV
         )
         if result.stdout.strip():
-            for line in result.stdout.strip().split('\\n')[-5:]:
+            for line in result.stdout.strip().split("\\n")[-5:]:
                 print(f"         | {line.strip()}")
         else:
             print(f"         | (无相关日志输出 — 节点可能启动时崩溃)")
     except:
         pass
 
-def check_topic_data(name, timeout_sec=5):
-    """检查 topic 是否有实际数据流出 (ros2 topic echo --once)"""
-    if name not in topic_list:
-        print(f"  {FAIL}  topic: {name}  <-- 未注册!")
-        return False
-    try:
-        result = subprocess.run(
-            f"timeout {timeout_sec} ros2 topic echo {name} --once 2>/dev/null",
-            shell=True, capture_output=True, text=True, timeout=timeout_sec + 3
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            print(f"  {OK}  data : {name}")
-            return True
-        else:
-            print(f"  {FAIL}  data : {name}  <-- 无数据!")
+def check_topic_data(name, timeout_sec=5, retries=2, delay=2.0):
+    """检查 topic 是否有实际数据流出 (ros2 topic echo --once)，带重试"""
+    for attempt in range(1, max(retries, 1) + 1):
+        # 每轮都确认 topic 已注册
+        topics = _get_topics()
+        if name not in topics:
+            if attempt < retries:
+                print(f"  ...  topic {name} 尚未注册，{delay:.0f}s 后重试 ({attempt}/{retries})")
+                time.sleep(delay)
+                continue
+            print(f"  {FAIL}  data : {name}  <-- 未注册!")
             return False
-    except:
-        print(f"  {FAIL}  data : {name}  <-- 超时!")
-        return False
+        try:
+            result = subprocess.run(
+                f"timeout {timeout_sec} ros2 topic echo {name} --once 2>/dev/null",
+                shell=True, capture_output=True, text=True,
+                timeout=timeout_sec + 3, env=_ROS_ENV
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                msg = f"  {OK}  data : {name}"
+                if attempt > 1:
+                    msg += f" (第{attempt}次重试成功)"
+                print(msg)
+                return True
+            if attempt < retries:
+                print(f"  ...  topic {name} 已注册但无数据，{delay:.0f}s 后重试 ({attempt}/{retries})")
+                time.sleep(delay)
+        except:
+            if attempt < retries:
+                time.sleep(delay)
+    print(f"  {FAIL}  data : {name}  <-- 无数据!")
+    return False
 
 def section(title):
     print(f"\\n{'='*60}")
@@ -362,7 +429,6 @@ else:
 # 3) 左夹爪 — 夹爪可能未连接，失败仅报警告不阻断
 section("左夹爪")
 lg_ok = True
-# 先检查串口设备是否存在
 check_serial_port("/dev/serial/by-path/pci-0000:05:00.4-usb-0:1.4:1.0-port0") or (lg_ok := False)
 check_node("L_gripper_node") or (lg_ok := False)
 check_topic("/L/gripper/status_stream") or (lg_ok := False)
@@ -370,7 +436,9 @@ if lg_ok:
     print(f"  ==> 左夹爪: [SUCCESS]")
     pass_count += 1
 else:
-    if "L_gripper_node" not in node_list:
+    # 二次确认节点是否真的不在线 (不做重试，只看当前状态)
+    nodes = _get_nodes()
+    if "L_gripper_node" not in nodes:
         print(f"  {WARN}  左夹爪节点未启动 — 可能串口打开失败，抓取最近日志:")
         get_gripper_node_log("L_gripper_node")
     print(f"  {WARN}  左夹爪状态获取失败 — 检查串口连接/供电")
@@ -388,7 +456,8 @@ if rg_ok:
     print(f"  ==> 右夹爪: [SUCCESS]")
     pass_count += 1
 else:
-    if "R_gripper_node" not in node_list:
+    nodes = _get_nodes()
+    if "R_gripper_node" not in nodes:
         print(f"  {WARN}  右夹爪节点未启动 — 可能串口打开失败，抓取最近日志:")
         get_gripper_node_log("R_gripper_node")
     print(f"  {WARN}  右夹爪状态获取失败 — 检查串口连接/供电")
