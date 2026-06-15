@@ -599,6 +599,15 @@ void RoboCtrlNode::handle_robot_servo_line(
                     float filterT     = request->filter_time;
                     float gain        = request->gain;
 
+                    // AI-Deep: 必须先调用 ServoMoveStart 进入伺-服模式
+                    int ret = robot_->ServoMoveStart();
+                    if (ret != 0) {
+                        RCLCPP_ERROR(this->get_logger(), "ServoMoveStart失败，错误码: %d", ret);
+                        is_servo_running_.store(false);
+                        return;
+                    }
+                    RCLCPP_INFO(this->get_logger(), "ServoMoveStart成功，开始执行ServoLine轨迹");
+
                     for (int i = 0; i < point_num && is_servo_running_; ++i) {
                         const auto& pose = request->cartesian_pose.poses[i];
                         DescPose target_pose;
@@ -624,7 +633,7 @@ void RoboCtrlNode::handle_robot_servo_line(
                             target_pose.rpy.ry,
                             target_pose.rpy.rz
                         );
-                        auto ret = robot_->ServoCart(
+                        ret = robot_->ServoCart(
                             mode,         // 运动模式
                             &target_pose, // 笛卡尔位姿
                             pos_gain,     // 位姿增量比例系数
@@ -636,14 +645,23 @@ void RoboCtrlNode::handle_robot_servo_line(
                         );
                         if (ret != 0) {
                             RCLCPP_ERROR(this->get_logger(), "ServoLine路径跟踪失败，错误码: %d", ret);
+                            robot_->ServoMoveEnd();
                             is_servo_running_.store(false);
                             return;
                         }
                         robot_->WaitMs(cmdT * 1000);
                     }
 
+                    // AI-Deep: 轨迹执行完毕后退出伺服模式
+                    ret = robot_->ServoMoveEnd();
+                    if (ret != 0) {
+                        RCLCPP_WARN(this->get_logger(), "ServoMoveEnd失败，错误码: %d", ret);
+                    } else {
+                        RCLCPP_INFO(this->get_logger(), "ServoMoveEnd成功");
+                    }
+
                     is_servo_running_.store(false);
-                    RCLCPP_INFO(this->get_logger(), "ServoLine路径执行完毕或被中断");
+                    RCLCPP_INFO(this->get_logger(), "ServoLine路径执行完毕");
                 });
 
                 response->success = true;
@@ -797,6 +815,15 @@ void RoboCtrlNode::handle_robot_servo_joint(
                     float filterT = request->filter_time;
                     float gain    = request->gain;
 
+                    // AI-Deep: 必须先调用 ServoMoveStart 进入伺服模式，ServoJ 才能驱动机器人
+                    int ret = robot_->ServoMoveStart();
+                    if (ret != 0) {
+                        RCLCPP_ERROR(this->get_logger(), "ServoMoveStart失败，错误码: %d", ret);
+                        is_servo_running_.store(false);
+                        return;
+                    }
+                    RCLCPP_INFO(this->get_logger(), "ServoMoveStart成功，开始执行ServoJ轨迹");
+
                     // 执行预计算的关节角度序列
                     for (size_t i = 0; i < target_poses.size() && is_servo_running_; ++i) {
                         const auto& target_pose = target_poses[i];
@@ -813,17 +840,26 @@ void RoboCtrlNode::handle_robot_servo_joint(
                             target_pose.jPos[5]
                         );
 
-                        auto ret = robot_->ServoJ(const_cast<JointPos*>(&target_pose), acc, vel, cmdT, filterT, gain);
+                        ret = robot_->ServoJ(const_cast<JointPos*>(&target_pose), acc, vel, cmdT, filterT, gain);
                         if (ret != 0) {
                             RCLCPP_ERROR(this->get_logger(), "ServoJ路径跟踪失败，错误码: %d", ret);
+                            robot_->ServoMoveEnd();
                             is_servo_running_.store(false);
                             return;
                         }
                         robot_->WaitMs(cmdT * 1100);
                     }
 
+                    // AI-Deep: 轨迹执行完毕后退出伺服模式
+                    ret = robot_->ServoMoveEnd();
+                    if (ret != 0) {
+                        RCLCPP_WARN(this->get_logger(), "ServoMoveEnd失败，错误码: %d", ret);
+                    } else {
+                        RCLCPP_INFO(this->get_logger(), "ServoMoveEnd成功");
+                    }
+
                     is_servo_running_.store(false);
-                    RCLCPP_DEBUG(this->get_logger(), "ServoJ路径执行完毕或被中断");
+                    RCLCPP_INFO(this->get_logger(), "ServoJ路径执行完毕");
                 });
 
                 response->success = true;

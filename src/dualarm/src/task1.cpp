@@ -1,13 +1,17 @@
 /*
 AI-Deep:
-    task1 v2 — 简化版：识别可乐 → 左臂抓取 → 后退 → 回初始位
-    从原 task1 (开瓶盖+倒水完整流程) 精简而来，删去 Step 7-14
-    Step 8-14 (开瓶盖/倒水/右臂操作) 待后续任务使用
+    task1 v3 — 2026-06-10: 一步到位版
+      识别可乐 → 一次MoveCart(位置+姿态) → 抓取 → 后退 → 回初始位
+    v2→v3 改动: 删掉 L_fix(纯姿态)+RobotAct(纯位置) 两步走,
+      改为一次 MoveCart PTP规划, 同时到达目标位置和抓取姿态,
+      解决两步走中间IK无解/过关节极限 → 154/14 的问题
+    v2: 从原 task1 (开瓶盖+倒水完整流程) 精简而来，删去 Step 7-14
 */
 #include "dualarm/headers.hpp"
 #include "dualarm/service_server_template.hpp"
 #include <thread>
-#include "main.h"
+// AI-Deep 2026-06-10: L_fix 已移除, 改为一步 MoveCart, main.h 不再需要
+// #include "main.h"
 
 // AI-Deep: 左右爪分节点后,各自独立RS485总线,slave_id均为9
 #define GRIPPER_ID_L    9
@@ -26,6 +30,62 @@ int main(int argc, char** argv) {
     executor.add_node(node);
 
     std::thread spin_thread([&executor]() { executor.spin(); });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Step 0: MoveCart PTP 移动到观察位
+    //   TCP [110.6, -35.5, 636.7] 姿态 [174.9, -42.4, 53.9] (config.yaml)
+    // ══════════════════════════════════════════════════════════════════════
+    RCLCPP_INFO(node->get_logger(), "Step 0: MoveCart 移动到观察位");
+
+    {
+        // 等待 robot_state 就绪
+        RCLCPP_INFO(node->get_logger(), "等待 robot_state 就绪...");
+        auto t0 = node->get_clock()->now();
+        while (rclcpp::ok()) {
+            bool ready = false;
+            {
+                std::lock_guard<std::mutex> lock(node->L_robot_state_mutex_);
+                ready = (node->L_robot_state_ != nullptr);
+            }
+            if (ready) break;
+            if ((node->get_clock()->now() - t0).seconds() > 10.0) {
+                RCLCPP_ERROR(node->get_logger(), "等待 robot_state 超时");
+                rclcpp::shutdown(); spin_thread.join(); return 1;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        RCLCPP_INFO(node->get_logger(), "robot_state 就绪");
+    }
+
+    // AI-Deep: 使用 RobotMoveCart (MoveCart PTP) 到观察位
+    //   观察位 = init_tcp_pose (config.yaml 中定义)
+    {
+        auto obs_req = std::make_shared<robo_ctrl::srv::RobotMoveCart::Request>();
+        obs_req->tcp_pose.x    = node->init_tcp_pose_vec_[0];
+        obs_req->tcp_pose.y    = node->init_tcp_pose_vec_[1];
+        obs_req->tcp_pose.z    = node->init_tcp_pose_vec_[2];
+        obs_req->tcp_pose.rx   = node->init_tcp_pose_vec_[3];
+        obs_req->tcp_pose.ry   = node->init_tcp_pose_vec_[4];
+        obs_req->tcp_pose.rz   = node->init_tcp_pose_vec_[5];
+        obs_req->tool           = -1;
+        obs_req->user           = -1;
+        obs_req->velocity       = 30;
+        obs_req->acceleration   = 30;
+        obs_req->ovl            = 100;
+        obs_req->blend_time     = -1.0;   // 阻塞运动
+        obs_req->config         = -1;
+        obs_req->use_increment  = false;  // 绝对位置
+
+        auto obs_resp = ServiceCaller<robo_ctrl::srv::RobotMoveCart>::callServiceSync(
+            node->L_robot_move_cart_client_, obs_req, node,
+            std::chrono::seconds(30), "L/robot_move_cart_observe");
+
+        if (!obs_resp->success) {
+            RCLCPP_ERROR(node->get_logger(), "移动到观察位失败: %s", obs_resp->message.c_str());
+            rclcpp::shutdown(); spin_thread.join(); return 1;
+        }
+    }
+    RCLCPP_INFO(node->get_logger(), "已到达观察位");
 
     // ══════════════════════════════════════════════════════════════════════
     // Step 1: 使能左夹爪
@@ -79,12 +139,11 @@ int main(int argc, char** argv) {
     // ══════════════════════════════════════════════════════════════════════
     RCLCPP_INFO(node->get_logger(), "Step 3: 等待检测可乐...");
 
-    std::vector<double> tcp_to_cola_increment;
     std::vector<double> cola_position;
     bool cola_found = false;
 
     // 等待检测出现
-    rclcpp::sleep_for(std::chrono::seconds(2));
+    rclcpp::sleep_for(std::chrono::seconds(4));
     RCLCPP_INFO(node->get_logger(), "Detected %zu objects", node->getDetectedObjectsCount());
 
     if (node->hasObject(1)) {
@@ -92,8 +151,7 @@ int main(int argc, char** argv) {
         if (!cola_position.empty()) {
             RCLCPP_INFO(node->get_logger(), "Cola (ID=1) found at position: [%.3f, %.3f, %.3f]",
                         cola_position[0], cola_position[1], cola_position[2]);
-            tcp_to_cola_increment = node->calculateTcpToObjectIncrement(cola_position);
-            cola_found            = true;
+            cola_found = true;
         }
     }
 
@@ -102,12 +160,8 @@ int main(int argc, char** argv) {
         rclcpp::shutdown(); spin_thread.join(); return 1;
     }
 
-    // 计算目标TCP位置（增量）
-    std::vector<double> target_tcp_position = {
-        tcp_to_cola_increment[0], tcp_to_cola_increment[1], tcp_to_cola_increment[2]};
-
-    RCLCPP_INFO(node->get_logger(), "Target TCP position: [%.3f, %.3f, %.3f]",
-                target_tcp_position[0], target_tcp_position[1], target_tcp_position[2]);
+    // 2026-06-10: 不再使用增量计算, 改为 Step 4 中直接计算 MoveCart 绝对目标位姿
+    RCLCPP_INFO(node->get_logger(), "Cola position confirmed, proceeding to one-step MoveCart");
 
     // 禁用物体位置更新
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -115,115 +169,56 @@ int main(int argc, char** argv) {
     RCLCPP_INFO(node->get_logger(), "Object update disabled for grasping operation");
 
     // ══════════════════════════════════════════════════════════════════════
-    // Step 4: 修正左臂姿态到 (-90, 0, -90)
+    // Step 4: MoveCart PTP 直接到达目标位姿 (2026-06-10: 改用 MoveCart 绕过 servo 路径)
     // ══════════════════════════════════════════════════════════════════════
-    RCLCPP_INFO(node->get_logger(), "Step 4: 修正姿态");
+    RCLCPP_INFO(node->get_logger(), "Step 4: MoveCart 移动到可乐");
 
-    bool retFlag;
-    int retVal;
-    double total_angle_diff;
-    std::vector<double> orientation_increment;
-    std::shared_ptr<robo_ctrl::srv::RobotMoveCart::Request>  fix_request;
-    std::shared_ptr<robo_ctrl::srv::RobotMoveCart::Response> fix_response;
+    const double TIP_BASE_DX =  185.64;
+    const double TIP_BASE_DY =    1.66;
+    const double TIP_BASE_DZ =   -1.82;
 
-    retVal = L_fix(node, orientation_increment, total_angle_diff,
-                   fix_request, fix_response, retFlag);
-    if (retFlag) {
-        rclcpp::shutdown(); spin_thread.join(); return retVal;
-    }
-
-    int wait_time_ms = static_cast<int>(std::max(1000.0, total_angle_diff * 50.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(wait_time_ms));
-    RCLCPP_INFO(node->get_logger(), "Robot orientation fixed successfully");
-
-    // ═══════════════════════════════════════════════════════════════
-    // 用 TCP 标定结果计算夹爪尖端增量 (替代硬编码 -132, +45)
-    //
-    // 标定数据 (static_transforms.yaml 2026-06-04):
-    //   Ltcp→Lgripper_tip: [-0.00166, 0.00182, 0.18564] m
-    //
-    // 抓取姿态 rx=-90°, ry=0°, rz=-90° 下:
-    //   R = Rz(-90°)*Rx(-90°) = [[0,0,1],[-1,0,0],[0,-1,0]]
-    //   tcp_offset_base = R * [-1.66, 1.82, 185.64]^T
-    //                   = [185.64, 1.66, -1.82] mm
-    // ═══════════════════════════════════════════════════════════════
-    const double TCP_OFFSET_TCP_X = -1.66;   // mm
-    const double TCP_OFFSET_TCP_Y =  1.82;
-    const double TCP_OFFSET_TCP_Z = 185.64;
-
-    // R * [tx, ty, tz]^T = [tz, -tx, -ty]  (at grasp orientation)
-    const double TIP_BASE_DX =  TCP_OFFSET_TCP_Z;   // +185.64 mm
-    const double TIP_BASE_DY = -TCP_OFFSET_TCP_X;   //   +1.66 mm
-    const double TIP_BASE_DZ = -TCP_OFFSET_TCP_Y;   //   -1.82 mm
-
-    double flange_x = 0, flange_y = 0, flange_z = 0;
-    {
-        std::lock_guard<std::mutex> lock(node->L_robot_state_mutex_);
-        if (node->L_robot_state_) {
-            flange_x = node->L_robot_state_->tcp_pose.x;
-            flange_y = node->L_robot_state_->tcp_pose.y;
-            flange_z = node->L_robot_state_->tcp_pose.z;
-        }
-    }
-
-    // 夹爪尖端当前位置
-    double tip_x = flange_x + TIP_BASE_DX;
-    double tip_y = flange_y + TIP_BASE_DY;
-    double tip_z = flange_z + TIP_BASE_DZ;
-
-    // 目标: 夹爪尖端→可乐中心
-    double desired_x = cola_position[0] * 1000.0;              // m→mm
-    double desired_y = cola_position[1] * 1000.0;
-    double desired_z = node->desk_height_ + node->cola_height_; // 桌面+可乐半高
-
-    // 法兰增量 = 目标尖端位置 - 当前尖端位置
-    target_tcp_position[0] = desired_x - tip_x;
-    target_tcp_position[1] = desired_y - tip_y;
-    target_tcp_position[2] = desired_z - tip_z;
+    const double TARGET_X  = cola_position[0] * 1000.0 - TIP_BASE_DX;
+    const double TARGET_Y  = cola_position[1] * 1000.0 - TIP_BASE_DY;
+    const double TARGET_Z  = node->desk_height_ + node->cola_height_ - TIP_BASE_DZ;
+    const double TARGET_RX = -90.0;
+    const double TARGET_RY = 0.0;
+    const double TARGET_RZ = -90.0;
 
     RCLCPP_INFO(node->get_logger(),
-        "法兰:[%.1f,%.1f,%.1f] 尖端:[%.1f,%.1f,%.1f] → 目标:[%.1f,%.1f,%.1f] 增量:[%.1f,%.1f,%.1f]",
-        flange_x, flange_y, flange_z,
-        tip_x, tip_y, tip_z,
-        desired_x, desired_y, desired_z,
-        target_tcp_position[0], target_tcp_position[1], target_tcp_position[2]);
+        "目标 TCP:[%.1f, %.1f, %.1f]mm 姿态:[%.1f, %.1f, %.1f]deg",
+        TARGET_X, TARGET_Y, TARGET_Z, TARGET_RX, TARGET_RY, TARGET_RZ);
 
-    // ══════════════════════════════════════════════════════════════════════
-    // Step 5: 左臂移动到可乐位置
-    // ══════════════════════════════════════════════════════════════════════
-    RCLCPP_INFO(node->get_logger(), "Step 5: 移动到可乐位置");
+    // AI-Deep: 使用 RobotMoveCart (MoveCart PTP)，阻塞调用
+    auto cart_req = std::make_shared<robo_ctrl::srv::RobotMoveCart::Request>();
+    cart_req->tcp_pose.x    = TARGET_X;
+    cart_req->tcp_pose.y    = TARGET_Y;
+    cart_req->tcp_pose.z    = TARGET_Z;
+    cart_req->tcp_pose.rx   = TARGET_RX;
+    cart_req->tcp_pose.ry   = TARGET_RY;
+    cart_req->tcp_pose.rz   = TARGET_RZ;
+    cart_req->tool           = -1;    // 默认工具
+    cart_req->user           = -1;    // 默认工件
+    cart_req->velocity       = 30;
+    cart_req->acceleration   = 30;
+    cart_req->ovl            = 100;
+    cart_req->blend_time     = -1.0;  // 阻塞运动
+    cart_req->config         = -1;    // 参考当前关节构型
+    cart_req->use_increment  = false; // 绝对位置
 
-    // 增量已在 Step 4.5 中通过 TCP 标定精确计算
-    auto act_request             = std::make_shared<robo_ctrl::srv::RobotAct::Request>();
-    act_request->command_type    = 0; // ServoMoveStart
-    act_request->tcp_pose.x      = target_tcp_position[0];
-    act_request->tcp_pose.y      = target_tcp_position[1];
-    act_request->tcp_pose.z      = target_tcp_position[2];
-    act_request->tcp_pose.rx     = 0.0;
-    act_request->tcp_pose.ry     = 0.0;
-    act_request->tcp_pose.rz     = 0.0;
-    act_request->point_count     = 180;
-    act_request->message_time    = 0.01;
-    act_request->plan_type       = 0;    // 直线规划
-    act_request->use_incremental = true; // 增量运动
+    auto cart_resp = ServiceCaller<robo_ctrl::srv::RobotMoveCart>::callServiceSync(
+        node->L_robot_move_cart_client_, cart_req, node,
+        std::chrono::seconds(30), "L/robot_move_cart_cola");
 
-    auto act_response = ServiceCaller<robo_ctrl::srv::RobotAct>::callServiceSync(
-        node->L_robot_act_client_, act_request, node, std::chrono::seconds(10),
-        "L/robot_act_cola");
-
-    if (!act_response->success) {
-        RCLCPP_ERROR(node->get_logger(), "Failed to move robot to cola position: %s",
-                     act_response->message.c_str());
+    if (!cart_resp->success) {
+        RCLCPP_ERROR(node->get_logger(), "MoveCart 失败: %s", cart_resp->message.c_str());
         rclcpp::shutdown(); spin_thread.join(); return 1;
     }
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(static_cast<int>(180 * 0.01 * 1000 + 3000)));
-    RCLCPP_INFO(node->get_logger(), "Robot moved to cola position successfully");
+    RCLCPP_INFO(node->get_logger(), "已到达可乐抓取位姿");
 
     // ══════════════════════════════════════════════════════════════════════
-    // Step 6: 合上左夹爪 → 后退离开桌面
+    // Step 5: 合上左夹爪 → 后退离开桌面 (2026-06-10: 原Step 6)
     // ══════════════════════════════════════════════════════════════════════
-    RCLCPP_INFO(node->get_logger(), "Step 6: 夹住可乐并后退");
+    RCLCPP_INFO(node->get_logger(), "Step 5: 夹住可乐并后退");
 
     auto gripper_request      = std::make_shared<epg50_gripper_ros::srv::GripperCommand::Request>();
     gripper_request->slave_id = GRIPPER_ID_L;
@@ -237,58 +232,62 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     RCLCPP_INFO(node->get_logger(), "Gripper closed successfully");
 
-    // 后退离开桌面
-    auto exit_request           = std::make_shared<robo_ctrl::srv::RobotMoveCart::Request>();
-    exit_request->tcp_pose.x    = -150;
-    exit_request->tcp_pose.y    = 0.0;
-    exit_request->tcp_pose.z    = 30;
-    exit_request->tcp_pose.rx   = 0.0;
-    exit_request->tcp_pose.ry   = 0.0;
-    exit_request->tcp_pose.rz   = 0.0;
-    exit_request->acceleration  = 100;
-    exit_request->velocity      = 10;
-    exit_request->config        = -1;
-    exit_request->blend_time    = 0.0;
-    exit_request->use_increment = true;
-    exit_request->tool          = -1;
-    exit_request->user          = -1;
-    exit_request->ovl           = 0;
-    auto exit_response          = ServiceCaller<robo_ctrl::srv::RobotMoveCart>::callServiceSync(
-        node->L_robot_move_cart_client_, exit_request, node, std::chrono::seconds(10),
-        "L/robot_move_cart_exit");
+    // 后退离开桌面 (MoveCart 增量)
+    {
+        auto exit_req = std::make_shared<robo_ctrl::srv::RobotMoveCart::Request>();
+        exit_req->tcp_pose.x    = -150;
+        exit_req->tcp_pose.y    = 0;
+        exit_req->tcp_pose.z    = 30;
+        exit_req->tcp_pose.rx   = 0;
+        exit_req->tcp_pose.ry   = 0;
+        exit_req->tcp_pose.rz   = 0;
+        exit_req->tool           = -1;
+        exit_req->user           = -1;
+        exit_req->velocity       = 30;
+        exit_req->acceleration   = 30;
+        exit_req->ovl            = 100;
+        exit_req->blend_time     = -1.0;
+        exit_req->config         = -1;
+        exit_req->use_increment  = true;
 
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(static_cast<int>(1000 + 1500)));
+        auto resp = ServiceCaller<robo_ctrl::srv::RobotMoveCart>::callServiceSync(
+            node->L_robot_move_cart_client_, exit_req, node, std::chrono::seconds(10),
+            "L/robot_move_cart_exit");
+        if (!resp->success)
+            RCLCPP_WARN(node->get_logger(), "后退失败(非致命): %s", resp->message.c_str());
+    }
     RCLCPP_INFO(node->get_logger(), "Robot exited danger zone");
 
     // ══════════════════════════════════════════════════════════════════════
-    // Step 7: 回到初始观察位
+    // Step 6: 回到初始观察位 (RobotAct 增量)
     // ══════════════════════════════════════════════════════════════════════
-    RCLCPP_INFO(node->get_logger(), "Step 7: 回到初始位");
+    RCLCPP_INFO(node->get_logger(), "Step 6: 回到初始位");
 
-    rclcpp::sleep_for(std::chrono::seconds(2));
+    {
+        // AI-Deep: 使用 RobotMoveCart 绝对位置回到初始 TCP 位姿
+        auto ret_req = std::make_shared<robo_ctrl::srv::RobotMoveCart::Request>();
+        ret_req->tcp_pose.x    = node->init_tcp_pose_vec_[0];
+        ret_req->tcp_pose.y    = node->init_tcp_pose_vec_[1];
+        ret_req->tcp_pose.z    = node->init_tcp_pose_vec_[2];
+        ret_req->tcp_pose.rx   = node->init_tcp_pose_vec_[3];
+        ret_req->tcp_pose.ry   = node->init_tcp_pose_vec_[4];
+        ret_req->tcp_pose.rz   = node->init_tcp_pose_vec_[5];
+        ret_req->tool           = -1;
+        ret_req->user           = -1;
+        ret_req->velocity       = 30;
+        ret_req->acceleration   = 30;
+        ret_req->ovl            = 100;
+        ret_req->blend_time     = -1.0;
+        ret_req->config         = -1;
+        ret_req->use_increment  = false;
 
-    auto look_at_table_request           = std::make_shared<robo_ctrl::srv::RobotMoveCart::Request>();
-    look_at_table_request->tcp_pose.x    = node->init_tcp_pose_vec_[0];
-    look_at_table_request->tcp_pose.y    = node->init_tcp_pose_vec_[1];
-    look_at_table_request->tcp_pose.z    = node->init_tcp_pose_vec_[2];
-    look_at_table_request->tcp_pose.rx   = node->init_tcp_pose_vec_[3];
-    look_at_table_request->tcp_pose.ry   = node->init_tcp_pose_vec_[4];
-    look_at_table_request->tcp_pose.rz   = node->init_tcp_pose_vec_[5];
-    look_at_table_request->acceleration  = 100;
-    look_at_table_request->velocity      = 10;
-    look_at_table_request->config        = -1;
-    look_at_table_request->blend_time    = 0.0;
-    look_at_table_request->use_increment = false;
-    look_at_table_request->tool          = -1;
-    look_at_table_request->user          = -1;
-    look_at_table_request->ovl           = 0;
-
-    auto look_at_table_response = ServiceCaller<robo_ctrl::srv::RobotMoveCart>::callServiceSync(
-        node->L_robot_move_cart_client_, look_at_table_request, node,
-        std::chrono::seconds(10), "L/robot_move_cart_init");
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+        auto resp = ServiceCaller<robo_ctrl::srv::RobotMoveCart>::callServiceSync(
+            node->L_robot_move_cart_client_, ret_req, node, std::chrono::seconds(30),
+            "L/robot_move_cart_init");
+        if (!resp->success)
+            RCLCPP_WARN(node->get_logger(), "回初始位失败(非致命): %s", resp->message.c_str());
+    }
+    RCLCPP_INFO(node->get_logger(), "已回到初始位");
 
     // 重新启用物体检测
     node->setObjectUpdateEnabled(true);

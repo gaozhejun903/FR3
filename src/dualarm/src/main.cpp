@@ -104,7 +104,7 @@ RobotMain::RobotMain(const rclcpp::NodeOptions& options): Node("robot_main", opt
     L_robot_set_speed_client_  = this->create_client<robo_ctrl::srv::RobotSetSpeed>(ROBOT_L + "/robot_set_speed");
     L_robot_act_j_client_      = this->create_client<robo_ctrl::srv::RobotActJ>(ROBOT_L + "/robot_act_j");
     // AI-Deep: 左爪客户端 → L_gripper_node 的 ~/command
-    gripper_command_client_    = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/L_gripper_node/command");
+    gripper_command_client_    = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/L/gripper/command");
 
     R_robot_servo_line_client_ = this->create_client<robo_ctrl::srv::RobotServoLine>(ROBOT_R + "/robot_servo_line");
     R_robot_act_client_        = this->create_client<robo_ctrl::srv::RobotAct>(ROBOT_R + "/robot_act");
@@ -114,9 +114,9 @@ RobotMain::RobotMain(const rclcpp::NodeOptions& options): Node("robot_main", opt
     R_robot_set_speed_client_  = this->create_client<robo_ctrl::srv::RobotSetSpeed>(ROBOT_R + "/robot_set_speed");
     R_robot_act_j_client_      = this->create_client<robo_ctrl::srv::RobotActJ>(ROBOT_R + "/robot_act_j");
     // AI-Deep: 右爪客户端 → R_gripper_node 的 ~/command
-    R_gripper_command_client_  = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/R_gripper_node/command");
+    R_gripper_command_client_  = this->create_client<epg50_gripper_ros::srv::GripperCommand>("/R/gripper/command");
 
-    this->declare_parameter("init_tcp_pose", std::vector<double> { 168.0, -102.0, 394.0, -111.556, 0.0, -90.0 });
+    this->declare_parameter("init_tcp_pose", std::vector<double> { 110.574, -35.488, 636.674, 174.892, -42.426, 53.909 });
     this->declare_parameter("open_cap_joint_pose", std::vector<double> { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 });
     this->declare_parameter("desk_height", 190);
     this->declare_parameter("cola_height", 91);

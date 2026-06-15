@@ -22,7 +22,7 @@ detector_node::detector_node(const rclcpp::NodeOptions& options): Node("detector
         "/home/mihu/FR3_again/src/detector/asserts/layernorm_plugin.so"
     );
 #endif
-    this->declare_parameter("confidence_threshold", 0.5);
+    this->declare_parameter("confidence_threshold", 0.4);
     this->declare_parameter("image_topic", "/camera/color/image_raw");
     this->declare_parameter("detections_topic", "/detector/detections");
 

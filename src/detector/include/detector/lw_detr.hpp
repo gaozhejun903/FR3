@@ -112,7 +112,7 @@ private:
     int input_w         = 640;
     int num_boxes       = 100; // DETR输出的最大检测框数量
     int num_classes     = 91;  // DETR支持的类别数量
-    float THRESHOLD     = 0.5; // 置信度阈值
+    float THRESHOLD     = 0.4; // 置信度阈值
     float NMS_THRESHOLD = 0.4; // NMS阈值
     nvinfer1::ICudaEngine* engine;
     nvinfer1::IRuntime* runtime;
